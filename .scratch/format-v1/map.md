@@ -24,10 +24,11 @@ A buildable product spec for **Format v1**: a greenfield library plus CLI that R
 - [CLI Round-trip surface](issues/06-cli-round-trip-surface.md): `nextguide dump` + `nextguide check` (Structural; `--byte-stable` for Byte-stable); exit 0/non-zero
 - [Rust package layout](issues/07-rust-package-layout.md): Workspace — `crates/nextguide-gde` (lib) + `crates/nextguide` (bin); fixtures stay in `data/`
 - [Error model](issues/08-error-model.md): Fail closed; typed I/O / unsupported / corrupt; no partial Guide; CLI exits 0/1/2
+- [Kaitai as reference](issues/09-kaitai-as-reference.md): Read-only cross-check allowed; no codegen/vendoring as codec; not normative vs guide.c
 
 ## Not yet specified
 
-<!-- empty: remaining sharp questions graduated to tickets 08–09 -->
+<!-- empty: frontier cleared for this destination -->
 
 ## Out of scope
 
