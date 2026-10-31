@@ -39,3 +39,7 @@ _Avoid_: bit-exact (prefer Byte-stable Round-trip)
 **Preserve-through**:
 Format v1 codec behaviour that keeps non-Core and unknown `.gde` attributes opaque across load and save so The Guide does not lose them, without exposing them on the Core-model API.
 _Avoid_: passthrough, strip-on-write (when Preserve-through is meant)
+
+**Dummy root**:
+The synthetic root node The Guide stores in a v2 `.gde` (typically titled `"dummy"`), under which user-visible nodes hang. Format v1’s Core-model API exposes it as part of the on-disk tree.
+_Avoid_: hidden root, invisible root
