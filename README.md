@@ -44,3 +44,18 @@ cargo run -p nextguide
 
 **Manual check (UI smoke deferred in CI):** `cargo run -p nextguide -- data/ImportSample.gde` — confirm a resizable two-pane window (Dummy root hidden; titles in the tree), select a Node, edit a title and body (Ctrl/Cmd+B/I/U; window title shows `*`), Save, reopen and confirm changes; sibling bodies you did not edit should keep exotic RTF. Bare `cargo run -p nextguide` opens Untitled.
 
+### Release packaging (Windows + macOS)
+
+First-wave installers ship **`nextguide` + bundled GTK runtime + `nextguide-cli`**. Updates are **manual** (e.g. GitHub Releases). **Signing / notarization are optional** for early releases. Linux installers are deferred.
+
+See [`packaging/README.md`](packaging/README.md) for the full release-engineer path.
+
+```bash
+# macOS (Homebrew GTK4 + dylibbundler) → dist/NextGuide-*-macos-*.dmg
+./packaging/macos/build-dmg.sh
+
+# Windows (MSYS2 UCRT64) → dist/windows-bundle/, then NSIS setup.exe
+./packaging/windows/assemble-bundle.sh
+# PowerShell: .\packaging\windows\build-installer.ps1
+```
+
