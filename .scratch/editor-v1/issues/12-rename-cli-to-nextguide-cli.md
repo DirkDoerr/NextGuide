@@ -4,8 +4,8 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] CLI crate/binary is named `nextguide-cli`; dump/check still work with the same exit-code contract
-- [ ] Existing CI and docs/commands that invoked `nextguide` for Round-trip use `nextguide-cli`
-- [ ] Format v1 Structural/Byte-stable gates still pass
+- [x] CLI crate/binary is named `nextguide-cli`; dump/check still work with the same exit-code contract
+- [x] Existing CI and docs/commands that invoked `nextguide` for Round-trip use `nextguide-cli`
+- [x] Format v1 Structural/Byte-stable gates still pass

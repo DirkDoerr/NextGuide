@@ -1,5 +1,5 @@
 [package]
-name = "nextguide"
+name = "nextguide-cli"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
@@ -7,7 +7,7 @@ description = "CLI for Format v1 Guide .gde round-trip checks"
 publish = false
 
 [[bin]]
-name = "nextguide"
+name = "nextguide-cli"
 path = "src/main.rs"
 
 [dependencies]

@@ -21,7 +21,7 @@ jobs:
         run: cargo test
 
       - name: Structural check (ImportSample)
-        run: cargo run -p nextguide --quiet -- check data/ImportSample.gde
+        run: cargo run -p nextguide-cli --quiet -- check data/ImportSample.gde
 
       - name: Byte-stable check (owned golden)
-        run: cargo run -p nextguide --quiet -- check --byte-stable data/canonical-golden.gde
+        run: cargo run -p nextguide-cli --quiet -- check --byte-stable data/canonical-golden.gde

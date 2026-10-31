@@ -1,4 +1,4 @@
-//! `nextguide` CLI — Format v1 dump / check.
+//! `nextguide-cli` CLI — Format v1 dump / check.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -129,6 +129,6 @@ fn check_file(path: &Path, byte_stable: bool) -> Result<(), u8> {
 }
 
 fn usage() {
-    eprintln!("usage: nextguide dump <file.gde>");
-    eprintln!("       nextguide check [--byte-stable] <file.gde>");
+    eprintln!("usage: nextguide-cli dump <file.gde>");
+    eprintln!("       nextguide-cli check [--byte-stable] <file.gde>");
 }

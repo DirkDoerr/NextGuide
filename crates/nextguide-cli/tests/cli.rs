@@ -1,4 +1,4 @@
-//! Thin CLI smoke tests at the `nextguide` binary seam.
+//! Thin CLI smoke tests at the `nextguide-cli` binary seam.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -13,7 +13,7 @@ fn repo_data(name: &str) -> PathBuf {
 }
 
 fn bin() -> Command {
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_nextguide"));
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_nextguide-cli"));
     cmd.current_dir(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."));
     cmd
 }
@@ -45,6 +45,11 @@ fn dump_missing_file_exits_1() {
 fn dump_usage_exits_2() {
     let out = bin().args(["dump"]).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("nextguide-cli"),
+        "usage should name the renamed binary: {stderr}"
+    );
 }
 
 #[test]
@@ -80,6 +85,11 @@ fn check_golden_byte_stable_exits_0() {
 fn check_usage_exits_2() {
     let out = bin().args(["check"]).output().unwrap();
     assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("nextguide-cli"),
+        "usage should name the renamed binary: {stderr}"
+    );
 }
 
 #[test]
