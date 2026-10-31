@@ -1,0 +1,9 @@
+[package]
+name = "nextguide-rtf"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pragmatic RTF ↔ edit-model conversion for Editor v1 (no GTK types)"
+publish = false
+
+[dependencies]

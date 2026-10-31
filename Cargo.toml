@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/nextguide-gde",
+    "crates/nextguide-rtf",
     "crates/nextguide-cli",
     "crates/nextguide",
 ]
@@ -11,5 +12,6 @@ members = [
 # (requires GTK4 + the `ui` feature, enabled by default on that package).
 default-members = [
     "crates/nextguide-gde",
+    "crates/nextguide-rtf",
     "crates/nextguide-cli",
 ]

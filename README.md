@@ -19,6 +19,7 @@ Format v1 is a greenfield library and CLI for The Guide **v2** `.gde` Core model
 Requires a stable Rust toolchain (`rust-toolchain.toml`; install via rustup or Homebrew `rust`).
 
 - Library: `nextguide-gde` (`crates/nextguide-gde`)
+- RTF edit model: `nextguide-rtf` (`crates/nextguide-rtf`) — pragmatic subset, no GTK types
 - CLI: `nextguide-cli` (`crates/nextguide-cli`) — `dump` and `check` (`--byte-stable` for owned goldens)
 - Editor: `nextguide` (`crates/nextguide`) — GTK4 + Relm4 stub (Editor v1)
 - Fixtures: `data/`
