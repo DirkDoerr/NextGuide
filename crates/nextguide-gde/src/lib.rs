@@ -5,10 +5,12 @@
 mod codec;
 mod error;
 mod model;
+mod path;
 mod roundtrip;
 
 pub use error::Error;
 pub use model::{Guide, Node};
+pub use path::NodePath;
 pub use roundtrip::{check_byte_stable, check_structural};
 
 /// Result alias for this crate.
@@ -200,5 +202,226 @@ mod tests {
             rewritten.windows(needle.len()).any(|w| w == needle),
             "expected Preserve-through of color attr 0xffffffff in saved bytes"
         );
+    }
+
+    fn color_attr_needle() -> Vec<u8> {
+        let mut v = Vec::new();
+        v.extend_from_slice(&4u32.to_le_bytes());
+        v.extend_from_slice(&4u32.to_le_bytes());
+        v.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn new_empty_guide_has_dummy_root_only() {
+        let guide = Guide::new_empty();
+        assert_eq!(guide.root().title(), "dummy");
+        assert_eq!(guide.root().rtf_body(), b"dummy");
+        assert!(guide.root().children().is_empty());
+        assert_eq!(guide.node(&NodePath::root()).unwrap().title(), "dummy");
+    }
+
+    #[test]
+    fn set_title_and_rtf_body_update_core_fields() {
+        let mut guide = load_path(data_fixture("ImportSample.gde")).unwrap();
+        let page1 = NodePath::from_indices(vec![0]);
+        guide.set_title(&page1, "Renamed").unwrap();
+        guide.set_rtf_body(&page1, b"{\\rtf1 new}").unwrap();
+        assert_eq!(guide.node(&page1).unwrap().title(), "Renamed");
+        assert_eq!(guide.node(&page1).unwrap().rtf_body(), b"{\\rtf1 new}");
+    }
+
+    #[test]
+    fn set_title_rejects_invalid_path() {
+        let mut guide = Guide::new_empty();
+        let err = guide
+            .set_title(&NodePath::from_indices(vec![0]), "x")
+            .expect_err("missing child");
+        assert!(matches!(err, Error::InvalidPath(_)), "{err}");
+    }
+
+    #[test]
+    fn insert_child_appends_and_returns_path() {
+        let mut guide = Guide::new_empty();
+        let path = guide.insert_child(&NodePath::root(), 0).unwrap();
+        assert_eq!(path, NodePath::from_indices(vec![0]));
+        let node = guide.node(&path).unwrap();
+        assert_eq!(node.title(), "");
+        assert!(node.rtf_body().is_empty());
+        assert!(node.children().is_empty());
+    }
+
+    #[test]
+    fn insert_child_rejects_index_past_len() {
+        let mut guide = Guide::new_empty();
+        let err = guide
+            .insert_child(&NodePath::root(), 1)
+            .expect_err("past end");
+        assert!(matches!(err, Error::InvalidEdit(_)), "{err}");
+    }
+
+    #[test]
+    fn remove_node_drops_subtree_and_refuses_dummy_root() {
+        let mut guide = load_path(data_fixture("ImportSample.gde")).unwrap();
+        let child1 = NodePath::from_indices(vec![0, 0]);
+        assert_eq!(guide.node(&child1).unwrap().title(), "Child1");
+        guide.remove_node(&child1).unwrap();
+        assert_eq!(guide.root().children()[0].children().len(), 1);
+        assert_eq!(guide.root().children()[0].children()[0].title(), "Child2");
+
+        let err = guide
+            .remove_node(&NodePath::root())
+            .expect_err("dummy root");
+        assert!(matches!(err, Error::InvalidEdit(_)), "{err}");
+    }
+
+    #[test]
+    fn move_node_reorders_same_parent_with_index_adjustment() {
+        let mut guide = load_path(data_fixture("ImportSample.gde")).unwrap();
+        // Under Page1: Child1, Child2 — move Child1 after Child2.
+        let from = NodePath::from_indices(vec![0, 0]);
+        let parent = NodePath::from_indices(vec![0]);
+        let new_path = guide.move_node(&from, &parent, 2).unwrap();
+        assert_eq!(new_path, NodePath::from_indices(vec![0, 1]));
+        let titles: Vec<_> = guide
+            .root()
+            .children()[0]
+            .children()
+            .iter()
+            .map(|n| n.title())
+            .collect();
+        assert_eq!(titles, ["Child2", "Child1"]);
+        // Grandchild stays under Child1.
+        assert_eq!(
+            guide.node(&NodePath::from_indices(vec![0, 1, 0]))
+                .unwrap()
+                .title(),
+            "Grandchild"
+        );
+    }
+
+    #[test]
+    fn move_node_reparents_across_parents() {
+        let mut guide = load_path(data_fixture("ImportSample.gde")).unwrap();
+        // Move Grandchild ([0,0,0]) under Child2 ([0,1]).
+        let from = NodePath::from_indices(vec![0, 0, 0]);
+        let to_parent = NodePath::from_indices(vec![0, 1]);
+        let new_path = guide.move_node(&from, &to_parent, 0).unwrap();
+        assert_eq!(new_path, NodePath::from_indices(vec![0, 1, 0]));
+        assert!(guide
+            .node(&NodePath::from_indices(vec![0, 0]))
+            .unwrap()
+            .children()
+            .is_empty());
+        assert_eq!(
+            guide.node(&new_path).unwrap().title(),
+            "Grandchild"
+        );
+    }
+
+    #[test]
+    fn move_node_refuses_dummy_root_and_into_descendant() {
+        let mut guide = load_path(data_fixture("ImportSample.gde")).unwrap();
+        let err = guide
+            .move_node(&NodePath::root(), &NodePath::from_indices(vec![0]), 0)
+            .expect_err("dummy");
+        assert!(matches!(err, Error::InvalidEdit(_)), "{err}");
+
+        let page1 = NodePath::from_indices(vec![0]);
+        let child1 = NodePath::from_indices(vec![0, 0]);
+        let err = guide
+            .move_node(&page1, &child1, 0)
+            .expect_err("into descendant");
+        assert!(matches!(err, Error::InvalidEdit(_)), "{err}");
+    }
+
+    #[test]
+    fn title_edit_preserves_non_core_attrs_on_disk() {
+        let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
+        let mut guide = load_bytes(&bytes).unwrap();
+        guide
+            .set_title(&NodePath::from_indices(vec![0, 0]), "Child1-renamed")
+            .unwrap();
+        let rewritten = save_bytes(&guide).unwrap();
+        assert!(
+            rewritten
+                .windows(color_attr_needle().len())
+                .any(|w| w == color_attr_needle()),
+            "color attr must survive title edit"
+        );
+        check_structural(&rewritten).expect("structural after title edit");
+    }
+
+    #[test]
+    fn move_preserves_non_core_attrs_with_node() {
+        let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
+        let mut guide = load_bytes(&bytes).unwrap();
+        // Move Child1 (has color attrs) after Child2.
+        guide
+            .move_node(
+                &NodePath::from_indices(vec![0, 0]),
+                &NodePath::from_indices(vec![0]),
+                2,
+            )
+            .unwrap();
+        let rewritten = save_bytes(&guide).unwrap();
+        assert!(
+            rewritten
+                .windows(color_attr_needle().len())
+                .any(|w| w == color_attr_needle()),
+            "color attr must move with Child1"
+        );
+        check_structural(&rewritten).expect("structural after move");
+    }
+
+    #[test]
+    fn remove_drops_preserve_through_for_deleted_subtree() {
+        let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
+        let before = save_bytes(&load_bytes(&bytes).unwrap()).unwrap();
+        assert!(before
+            .windows(color_attr_needle().len())
+            .any(|w| w == color_attr_needle()));
+
+        let mut guide = load_bytes(&bytes).unwrap();
+        // Delete entire Page1 subtree (includes Child1 color attrs).
+        guide
+            .remove_node(&NodePath::from_indices(vec![0]))
+            .unwrap();
+        let after = save_bytes(&guide).unwrap();
+        // New empty children use default attrs which also include 0xffffffff colors.
+        // Prove Child1 title is gone and Structural Round-trip still holds.
+        assert!(!after.windows(b"Child1".len()).any(|w| w == b"Child1"));
+        assert!(!after.windows(b"Page1".len()).any(|w| w == b"Page1"));
+        check_structural(&after).expect("structural after delete");
+    }
+
+    #[test]
+    fn insert_then_structural_round_trip_import_sample() {
+        let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
+        let mut guide = load_bytes(&bytes).unwrap();
+        let inserted = guide
+            .insert_child(&NodePath::from_indices(vec![0]), 1)
+            .unwrap();
+        guide.set_title(&inserted, "Inserted").unwrap();
+        guide.set_rtf_body(&inserted, b"{\\rtf1 insert}").unwrap();
+        let saved = save_bytes(&guide).unwrap();
+        check_structural(&saved).expect("structural after insert");
+        let again = load_bytes(&saved).unwrap();
+        assert_eq!(again.root().children()[0].children()[1].title(), "Inserted");
+    }
+
+    #[test]
+    fn failed_edit_leaves_guide_unchanged() {
+        let mut guide = load_path(data_fixture("ImportSample.gde")).unwrap();
+        let before = save_bytes(&guide).unwrap();
+        let _ = guide
+            .move_node(
+                &NodePath::from_indices(vec![0]),
+                &NodePath::from_indices(vec![0, 0]),
+                0,
+            )
+            .expect_err("cycle");
+        let after = save_bytes(&guide).unwrap();
+        assert_eq!(before, after);
     }
 }

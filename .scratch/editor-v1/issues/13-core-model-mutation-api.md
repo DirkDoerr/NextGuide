@@ -4,9 +4,13 @@
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Public `NodePath` + mutation ops per Editor v1 spec; Dummy root cannot be deleted/reparented
-- [ ] Invalid path/edit errors are distinct and ops never leave a partial Guide
-- [ ] Preserve-through survives title/RTF/move; dropped on delete; empty on insert (observable via load/save, not bag exposure)
-- [ ] Structural Round-trip still passes for fixtures after representative mutations; Format v1 gates remain green
+- [x] Public `NodePath` + mutation ops per Editor v1 spec; Dummy root cannot be deleted/reparented
+- [x] Invalid path/edit errors are distinct and ops never leave a partial Guide
+- [x] Preserve-through survives title/RTF/move; dropped on delete; empty on insert (observable via load/save, not bag exposure)
+- [x] Structural Round-trip still passes for fixtures after representative mutations; Format v1 gates remain green
+
+## Answer
+
+Extended `nextguide-gde` with public `NodePath` and Guide mutation ops: `new_empty`, `node`, `set_title`, `set_rtf_body`, `insert_child`, `remove_node`, `move_node` (same-parent index adjustment; clone-swap for atomicity). Dummy root refuses delete/reparent. Errors: `InvalidPath` / `InvalidEdit` (distinct from `Corrupt`). Preserve-through bags stay private; survive title/move; drop with deleted subtree; empty on insert. Library tests cover ops + Structural Round-trip on ImportSample.
