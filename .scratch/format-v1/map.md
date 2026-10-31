@@ -18,6 +18,7 @@ A buildable product spec for **Format v1**: a greenfield library plus CLI that R
 
 - [Inventory primary sources for The Guide v2 .gde format](issues/04-primary-sources-inventory.md): No separate format spec — v2 `.gde` is defined by Apache-2.0 The Guide 2.0 `libguide` (`guide.c`/`guide.h`); inventory at `docs/research/gde-v2-primary-sources.md`
 - [Choose Format v1 implementation language](issues/01-implementation-language.md): Rust with a hard minimal-dependencies rule (desktop binaries now; same codec linkable later for optional mobile)
+- [Define Round-trip fixture equality](issues/02-round-trip-fixture-equality.md): Hybrid — Core-model structural Round-trip as CI gate; byte-stable Round-trip for canonical writer / owned goldens
 
 ## Not yet specified
 

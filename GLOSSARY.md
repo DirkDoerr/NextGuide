@@ -27,3 +27,11 @@ _Avoid_: full Guide, minimal Guide (prefer Core model)
 **Format v1**:
 The first shippable NextGuide product slice: a library that loads and saves Guides as `.gde` for the Core model, plus a CLI that proves Round-trip. No editor UI. Codec is greenfield (written from primary sources), targeting The Guide **v2** `.gde` only. RTF bodies are an opaque payload for Round-trip, not a parsed edit model.
 _Avoid_: MVP app, NextGuide app (when Format v1 is meant)
+
+**Structural Round-trip**:
+A load→save→load cycle that preserves the Core model (tree topology, titles, opaque RTF bodies), without requiring identical `.gde` bytes.
+_Avoid_: byte-identical (when only the Core model must match)
+
+**Byte-stable Round-trip**:
+A load→save cycle whose output `.gde` bytes equal the input under Format v1’s canonical writer (used for owned golden fixtures).
+_Avoid_: bit-exact (prefer Byte-stable Round-trip)
