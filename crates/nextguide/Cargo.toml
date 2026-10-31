@@ -1,0 +1,20 @@
+[package]
+name = "nextguide"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Editor v1 desktop app for The Guide v2 .gde files (GTK4 + Relm4)"
+publish = false
+
+[features]
+default = ["ui"]
+# Relm4/GTK4 shell. Omit for headless library tests (`cargo test -p nextguide --no-default-features`).
+ui = ["dep:relm4"]
+
+[dependencies]
+nextguide-gde = { path = "../nextguide-gde" }
+relm4 = { version = "0.9.1", optional = true }
+
+[[bin]]
+name = "nextguide"
+path = "src/main.rs"

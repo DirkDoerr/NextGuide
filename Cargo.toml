@@ -3,4 +3,13 @@ resolver = "2"
 members = [
     "crates/nextguide-gde",
     "crates/nextguide-cli",
+    "crates/nextguide",
+]
+# Default `cargo test` / `cargo build` stay free of GTK so CI and headless
+# developers keep Format v1 gates green. Build the editor with:
+#   cargo run -p nextguide
+# (requires GTK4 + the `ui` feature, enabled by default on that package).
+default-members = [
+    "crates/nextguide-gde",
+    "crates/nextguide-cli",
 ]
