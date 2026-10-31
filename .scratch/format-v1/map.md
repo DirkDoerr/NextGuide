@@ -22,16 +22,16 @@ A buildable product spec for **Format v1**: a greenfield library plus CLI that R
 - [Non-Core attributes policy](issues/03-non-core-attributes-policy.md): Preserve-through — opaque load/save of non-Core and unknown attrs; Core API need not expose them
 - [Library API for Core model](issues/05-library-api-core-model.md): Codec + Core read model (load/save path+bytes; Guide/Node title+opaque RTF+children; no edit/RTF API; dummy root visible; Preserve-through private)
 - [CLI Round-trip surface](issues/06-cli-round-trip-surface.md): `nextguide dump` + `nextguide check` (Structural; `--byte-stable` for Byte-stable); exit 0/non-zero
+- [Rust package layout](issues/07-rust-package-layout.md): Workspace — `crates/nextguide-gde` (lib) + `crates/nextguide` (bin); fixtures stay in `data/`
 
 ## Not yet specified
 
-- Whether third-party format descriptions (e.g. Kaitai) may be used strictly as *reference* while the codec stays greenfield
-- Error model for corrupt, truncated, or non-v2 `.gde` inputs
-- How Format v1 later feeds a desktop/mobile editor (beyond this destination)
+<!-- empty: remaining sharp questions graduated to tickets 08–09 -->
 
 ## Out of scope
 
 - Editor UI and desktop / mobile apps (README platforms beyond the format layer)
+- How Format v1 later feeds a desktop/mobile editor (integration shape deferred past this destination)
 - The Guide **v1** `.gde` generation (read or write)
 - Full The Guide 2.0 attribute parity beyond the Core model (icons, colors, checkboxes, hyperlinks, remembered expansion, etc.)
 - Adapting `libguide` or its forks as the Format v1 implementation
