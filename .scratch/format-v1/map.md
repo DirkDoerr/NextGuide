@@ -23,6 +23,7 @@ A buildable product spec for **Format v1**: a greenfield library plus CLI that R
 - [Library API for Core model](issues/05-library-api-core-model.md): Codec + Core read model (load/save path+bytes; Guide/Node title+opaque RTF+children; no edit/RTF API; dummy root visible; Preserve-through private)
 - [CLI Round-trip surface](issues/06-cli-round-trip-surface.md): `nextguide dump` + `nextguide check` (Structural; `--byte-stable` for Byte-stable); exit 0/non-zero
 - [Rust package layout](issues/07-rust-package-layout.md): Workspace — `crates/nextguide-gde` (lib) + `crates/nextguide` (bin); fixtures stay in `data/`
+- [Error model](issues/08-error-model.md): Fail closed; typed I/O / unsupported / corrupt; no partial Guide; CLI exits 0/1/2
 
 ## Not yet specified
 
