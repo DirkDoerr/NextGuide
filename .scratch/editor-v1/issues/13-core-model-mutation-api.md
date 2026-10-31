@@ -13,4 +13,4 @@
 
 ## Answer
 
-Extended `nextguide-gde` with public `NodePath` and Guide mutation ops: `new_empty`, `node`, `set_title`, `set_rtf_body`, `insert_child`, `remove_node`, `move_node` (same-parent index adjustment; clone-swap for atomicity). Dummy root refuses delete/reparent. Errors: `InvalidPath` / `InvalidEdit` (distinct from `Corrupt`). Preserve-through bags stay private; survive title/move; drop with deleted subtree; empty on insert. Library tests cover ops + Structural Round-trip on ImportSample.
+Extended `nextguide-gde` with public `NodePath` and Guide mutation ops: `new_empty`, `node`, `set_title`, `set_rtf_body`, `insert_child`, `remove_node`, `move_node` (same-parent index adjustment; refuse Dummy root delete/reparent and move-into-descendant). Errors: `InvalidPath` / `InvalidEdit` distinct from `Corrupt`. Preserve-through bags stay private; survive title/RTF/move and Guide-level file attrs; empty on insert; drop with deleted Nodes. Library tests cover ops, atomicity, Preserve-through via load/save, and Structural Round-trip on ImportSample after mutations.

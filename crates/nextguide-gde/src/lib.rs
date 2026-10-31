@@ -353,6 +353,68 @@ mod tests {
     }
 
     #[test]
+    fn rtf_edit_preserves_non_core_attrs_on_disk() {
+        let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
+        let mut guide = load_bytes(&bytes).unwrap();
+        guide
+            .set_rtf_body(&NodePath::from_indices(vec![0, 0]), b"{\\rtf1 edited}")
+            .unwrap();
+        let rewritten = save_bytes(&guide).unwrap();
+        assert!(
+            rewritten
+                .windows(color_attr_needle().len())
+                .any(|w| w == color_attr_needle()),
+            "color attr must survive RTF edit"
+        );
+        check_structural(&rewritten).expect("structural after RTF edit");
+    }
+
+    fn file_attr_id1_needle() -> Vec<u8> {
+        // ImportSample file attr id=1 value=5 (LE).
+        let mut v = Vec::new();
+        v.extend_from_slice(&1u32.to_le_bytes());
+        v.extend_from_slice(&4u32.to_le_bytes());
+        v.extend_from_slice(&5u32.to_le_bytes());
+        v
+    }
+
+    #[test]
+    fn guide_file_attrs_survive_core_edits() {
+        let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
+        assert!(bytes
+            .windows(file_attr_id1_needle().len())
+            .any(|w| w == file_attr_id1_needle()));
+        let mut guide = load_bytes(&bytes).unwrap();
+        guide
+            .set_title(&NodePath::from_indices(vec![0]), "Page1-x")
+            .unwrap();
+        guide
+            .insert_child(&NodePath::from_indices(vec![0]), 0)
+            .unwrap();
+        let rewritten = save_bytes(&guide).unwrap();
+        assert!(
+            rewritten
+                .windows(file_attr_id1_needle().len())
+                .any(|w| w == file_attr_id1_needle()),
+            "file-level Preserve-through must survive Core edits"
+        );
+    }
+
+    #[test]
+    fn insert_child_starts_empty_and_round_trips() {
+        let mut guide = Guide::new_empty();
+        let path = guide.insert_child(&NodePath::root(), 0).unwrap();
+        assert_eq!(guide.node(&path).unwrap().title(), "");
+        assert!(guide.node(&path).unwrap().rtf_body().is_empty());
+        let saved = save_bytes(&guide).unwrap();
+        check_structural(&saved).expect("structural after empty insert");
+        let again = load_bytes(&saved).unwrap();
+        assert_eq!(again.root().children().len(), 1);
+        assert_eq!(again.root().children()[0].title(), "");
+        assert!(again.root().children()[0].rtf_body().is_empty());
+    }
+
+    #[test]
     fn move_preserves_non_core_attrs_with_node() {
         let bytes = std::fs::read(data_fixture("ImportSample.gde")).unwrap();
         let mut guide = load_bytes(&bytes).unwrap();

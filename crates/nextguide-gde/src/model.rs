@@ -151,14 +151,7 @@ impl Guide {
         let mut cur = root;
         for (depth, &idx) in indices.iter().enumerate() {
             if idx >= cur.children.len() {
-                return Err(Error::InvalidPath(format!(
-                    "no Node at [{}] (index {idx} out of range at depth {depth})",
-                    indices
-                        .iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
+                return Err(Self::missing_path(indices, idx, depth));
             }
             cur = &cur.children[idx];
         }
@@ -169,18 +162,18 @@ impl Guide {
         let mut cur = root;
         for (depth, &idx) in indices.iter().enumerate() {
             if idx >= cur.children.len() {
-                return Err(Error::InvalidPath(format!(
-                    "no Node at [{}] (index {idx} out of range at depth {depth})",
-                    indices
-                        .iter()
-                        .map(|i| i.to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
+                return Err(Self::missing_path(indices, idx, depth));
             }
             cur = &mut cur.children[idx];
         }
         Ok(cur)
+    }
+
+    fn missing_path(indices: &[usize], idx: usize, depth: usize) -> Error {
+        Error::InvalidPath(format!(
+            "no Node at {} (index {idx} out of range at depth {depth})",
+            NodePath::from_indices(indices.to_vec())
+        ))
     }
 
     /// True when `prefix` equals `path` or is a strict ancestor path of `path`.
