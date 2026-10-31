@@ -1,0 +1,29 @@
+# NextGuide
+
+Cross-platform successor ideas around The Guide's hierarchical notes and `.gde` files. This glossary covers product language only.
+
+## Language
+
+**The Guide**:
+The original Windows two-pane rich-text outliner (SourceForge / theguide.sourceforge.net) whose behaviour and file format NextGuide targets.
+_Avoid_: Guide app, WinGuide (unless referring to a specific package name)
+
+**Guide**:
+A NextGuide / The Guide document: a tree of nodes, each with associated rich text, stored as a `.gde` file.
+_Avoid_: notebook, document (when the Guide sense is meant), file (prefer Guide when talking about the logical document)
+
+**Node**:
+One entry in a Guide's tree; it has a title (and other attributes) and may have rich-text body content.
+_Avoid_: page, topic, item (when Node is meant)
+
+**Round-trip**:
+A Guide written by NextGuide opens correctly in The Guide 2.0, and a Guide written by The Guide 2.0 opens correctly in NextGuide, for the supported feature set.
+_Avoid_: import-only, compatibility (when the two-way bar is meant)
+
+**Core model**:
+The v1-supported Guide surface: tree structure, node titles, and each node's RTF body. Other The Guide 2.0 attributes (icons, colors, checkboxes, hyperlinks, remembered expansion) are outside the Core model.
+_Avoid_: full Guide, minimal Guide (prefer Core model)
+
+**Format v1**:
+The first shippable NextGuide product slice: a library that loads and saves Guides as `.gde` for the Core model, plus a CLI that proves Round-trip. No editor UI. Codec is greenfield (written from primary sources), targeting The Guide **v2** `.gde` only. RTF bodies are an opaque payload for Round-trip, not a parsed edit model.
+_Avoid_: MVP app, NextGuide app (when Format v1 is meant)
