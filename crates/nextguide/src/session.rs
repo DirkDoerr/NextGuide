@@ -1,9 +1,9 @@
-//! Opened Guide session helpers (Dummy-root-hidden tree + body view + edit/save).
+//! Opened Guide session helpers (Dummy-root-hidden tree + body view + edit/restructure/save).
 
 use std::path::{Path, PathBuf};
 
 use nextguide_gde::{Guide, Node, NodePath, Result};
-use nextguide_rtf::{bytes_for_save, load as load_rtf, Document, LoadBody};
+use nextguide_rtf::{bytes_for_save, empty_rtf, load as load_rtf, Document, LoadBody};
 
 /// One visible tree row (Dummy root never appears).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,6 +88,44 @@ impl EditorDoc {
         self.guide.set_rtf_body(path, bytes)?;
         self.dirty = true;
         Ok(())
+    }
+
+    /// Insert a new empty child under `parent` at `index` (`len` = append).
+    ///
+    /// New Nodes get an empty title, minimal valid empty RTF (`nextguide-rtf`),
+    /// no children, and an empty Preserve-through bag (library default).
+    pub fn insert_child(&mut self, parent: &NodePath, index: usize) -> Result<NodePath> {
+        let path = self.guide.insert_child(parent, index)?;
+        if let Err(err) = self.guide.set_rtf_body(&path, empty_rtf()) {
+            let _ = self.guide.remove_node(&path);
+            return Err(err);
+        }
+        self.dirty = true;
+        Ok(path)
+    }
+
+    /// Remove the Node at `path` and its subtree. Refuses the Dummy root.
+    ///
+    /// Preserve-through bags for the removed subtree are dropped with it.
+    pub fn remove_node(&mut self, path: &NodePath) -> Result<()> {
+        self.guide.remove_node(path)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Move the Node at `from` under `to_parent` at `index` (`len` = append).
+    ///
+    /// Preserve-through bags move with the Node. Same-parent moves adjust
+    /// `index` after removal when needed (library behaviour).
+    pub fn move_node(
+        &mut self,
+        from: &NodePath,
+        to_parent: &NodePath,
+        index: usize,
+    ) -> Result<NodePath> {
+        let path = self.guide.move_node(from, to_parent, index)?;
+        self.dirty = true;
+        Ok(path)
     }
 
     /// Persist the Guide to its opened path and clear dirty.

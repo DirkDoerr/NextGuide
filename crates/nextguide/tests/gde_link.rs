@@ -215,3 +215,122 @@ fn save_after_title_and_body_edits_clears_dirty_and_round_trips() {
         sibling_before.as_slice()
     );
 }
+
+fn color_attr_needle() -> Vec<u8> {
+    // ImportSample Child1 color attr 0xffffffff (LE).
+    let mut needle = Vec::new();
+    needle.extend_from_slice(&4u32.to_le_bytes());
+    needle.extend_from_slice(&4u32.to_le_bytes());
+    needle.extend_from_slice(&0xffff_ffffu32.to_le_bytes());
+    needle
+}
+
+#[test]
+fn insert_child_marks_dirty_uses_empty_rtf_and_updates_tree() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    let before_len = doc.visible_tree()[0].children.len();
+
+    let inserted = doc.insert_child(&page1, before_len).expect("insert");
+    assert!(doc.is_dirty());
+    assert_eq!(inserted, NodePath::from_indices(vec![0, before_len]));
+    assert_eq!(doc.visible_tree()[0].children.len(), before_len + 1);
+    assert_eq!(doc.guide().node(&inserted).unwrap().title(), "");
+    let rtf = doc.guide().node(&inserted).unwrap().rtf_body();
+    assert!(!rtf.is_empty(), "editor policy: new bodies get minimal empty RTF");
+    assert!(rtf.windows(b"\\rtf1".len()).any(|w| w == b"\\rtf1"));
+}
+
+#[test]
+fn remove_node_marks_dirty_refuses_dummy_root_and_updates_tree() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let child1 = NodePath::from_indices(vec![0, 0]);
+    doc.remove_node(&child1).expect("remove");
+    assert!(doc.is_dirty());
+    let tree = doc.visible_tree();
+    let titles: Vec<_> = tree[0].children.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(titles, ["Child2"]);
+
+    let err = doc
+        .remove_node(&NodePath::root())
+        .expect_err("dummy root");
+    assert!(
+        matches!(err, nextguide_gde::Error::InvalidEdit(_)),
+        "{err}"
+    );
+}
+
+#[test]
+fn move_node_reorders_and_marks_dirty() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let from = NodePath::from_indices(vec![0, 0]);
+    let parent = NodePath::from_indices(vec![0]);
+    let new_path = doc.move_node(&from, &parent, 2).expect("move");
+    assert!(doc.is_dirty());
+    assert_eq!(new_path, NodePath::from_indices(vec![0, 1]));
+    let tree = doc.visible_tree();
+    let titles: Vec<_> = tree[0].children.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(titles, ["Child2", "Child1"]);
+}
+
+#[test]
+fn save_after_restructure_round_trips_and_preserves_attrs_on_move() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    // Reorder Child1 (has color attrs) after Child2.
+    doc.move_node(
+        &NodePath::from_indices(vec![0, 0]),
+        &NodePath::from_indices(vec![0]),
+        2,
+    )
+    .expect("move");
+    // Insert a sibling, then delete Child2.
+    let inserted = doc
+        .insert_child(&NodePath::from_indices(vec![0]), 2)
+        .expect("insert");
+    doc.set_title(&inserted, "Inserted").expect("title");
+    doc.remove_node(&NodePath::from_indices(vec![0, 0]))
+        .expect("remove Child2");
+
+    let out = std::env::temp_dir().join("nextguide-restructure.gde");
+    doc.save_to(&out).expect("save");
+    assert!(!doc.is_dirty());
+    let rewritten = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+
+    check_structural(&rewritten).expect("structural after restructure");
+    assert!(
+        rewritten
+            .windows(color_attr_needle().len())
+            .any(|w| w == color_attr_needle()),
+        "Preserve-through color attr must move with Child1"
+    );
+
+    let again = nextguide_gde::load_bytes(&rewritten).unwrap();
+    let titles: Vec<_> = again
+        .root()
+        .children()[0]
+        .children()
+        .iter()
+        .map(|n| n.title())
+        .collect();
+    assert_eq!(titles, ["Child1", "Inserted"]);
+}
+
+#[test]
+fn remove_node_drops_deleted_subtree_from_saved_guide() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    // Delete Page1 (and Child1 color attrs with it).
+    doc.remove_node(&NodePath::from_indices(vec![0]))
+        .expect("remove Page1");
+    assert!(doc.is_dirty());
+    assert!(doc.visible_tree().is_empty());
+
+    let out = std::env::temp_dir().join("nextguide-restructure-delete.gde");
+    doc.save_to(&out).expect("save");
+    let rewritten = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+
+    check_structural(&rewritten).expect("structural after delete");
+    assert!(!rewritten.windows(b"Page1".len()).any(|w| w == b"Page1"));
+    assert!(!rewritten.windows(b"Child1".len()).any(|w| w == b"Child1"));
+}

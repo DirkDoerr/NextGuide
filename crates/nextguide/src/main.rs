@@ -43,6 +43,20 @@ mod ui {
         ClearBody,
         TitleEdited { path: NodePath, title: String },
         BodyChanged,
+        /// Insert a child under the selection (or Dummy root when none).
+        InsertChild,
+        /// Insert a sibling after the selection (requires a selection).
+        InsertSibling,
+        /// Delete the selected Node (never the Dummy root — it is not selectable).
+        DeleteNode,
+        /// Reorder selected Node one slot earlier among siblings.
+        MoveUp,
+        /// Reorder selected Node one slot later among siblings.
+        MoveDown,
+        /// Reparent selected Node under its previous sibling (demote / indent).
+        Indent,
+        /// Reparent selected Node under its grandparent after its parent (promote).
+        Outdent,
     }
 
     #[relm4::component]
@@ -69,6 +83,59 @@ mod ui {
                         pack_start = &gtk::Button {
                             set_label: "Save",
                             connect_clicked => Msg::Save,
+                        },
+                        pack_start = &gtk::MenuButton {
+                            set_label: "Tree",
+                            #[wrap(Some)]
+                            set_popover = &gtk::Popover {
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 2,
+                                    set_margin_all: 6,
+
+                                    gtk::Button {
+                                        set_label: "Insert Child",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::InsertChild,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Insert Sibling",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::InsertSibling,
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Delete",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::DeleteNode,
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Move Up",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::MoveUp,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Move Down",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::MoveDown,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Indent",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::Indent,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Outdent",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::Outdent,
+                                    },
+                                },
+                            },
                         },
                     },
 
@@ -390,6 +457,181 @@ mod ui {
                     self.body_dirty = true;
                     self.refresh_title(widgets);
                 }
+                Msg::InsertChild => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
+                    let parent = self
+                        .selected
+                        .clone()
+                        .unwrap_or_else(NodePath::root);
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Open a Guide before restructuring.".into();
+                        return;
+                    };
+                    let index = match doc.guide().node(&parent) {
+                        Ok(node) => node.children().len(),
+                        Err(err) => {
+                            self.status = format!("Insert failed: {err}");
+                            return;
+                        }
+                    };
+                    match doc.insert_child(&parent, index) {
+                        Ok(path) => {
+                            self.after_tree_op(widgets, Some(path), "Inserted child");
+                        }
+                        Err(err) => {
+                            self.status = format!("Insert failed: {err}");
+                        }
+                    }
+                }
+                Msg::InsertSibling => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
+                    let Some(selected) = self.selected.clone() else {
+                        self.status = "Select a Node to insert a sibling.".into();
+                        return;
+                    };
+                    if selected.is_root() {
+                        self.status = "Cannot insert a sibling of the Dummy root.".into();
+                        return;
+                    }
+                    let Some(parent) = selected.parent() else {
+                        self.status = "Insert sibling failed: no parent.".into();
+                        return;
+                    };
+                    let Some(index) = selected.last_index() else {
+                        self.status = "Insert sibling failed: no index.".into();
+                        return;
+                    };
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Open a Guide before restructuring.".into();
+                        return;
+                    };
+                    match doc.insert_child(&parent, index + 1) {
+                        Ok(path) => {
+                            self.after_tree_op(widgets, Some(path), "Inserted sibling");
+                        }
+                        Err(err) => {
+                            self.status = format!("Insert sibling failed: {err}");
+                        }
+                    }
+                }
+                Msg::DeleteNode => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
+                    let Some(selected) = self.selected.clone() else {
+                        self.status = "Select a Node to delete.".into();
+                        return;
+                    };
+                    if selected.is_root() {
+                        self.status = "Cannot delete the Dummy root.".into();
+                        return;
+                    }
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Open a Guide before restructuring.".into();
+                        return;
+                    };
+                    match doc.remove_node(&selected) {
+                        Ok(()) => {
+                            self.selected = None;
+                            self.body_dirty = false;
+                            self.set_body_text("");
+                            self.after_tree_op(widgets, None, &format!("Deleted {selected}"));
+                        }
+                        Err(err) => {
+                            self.status = format!("Delete failed: {err}");
+                        }
+                    }
+                }
+                Msg::MoveUp => {
+                    self.reorder_selected(widgets, -1);
+                }
+                Msg::MoveDown => {
+                    self.reorder_selected(widgets, 1);
+                }
+                Msg::Indent => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
+                    let Some(selected) = self.selected.clone() else {
+                        self.status = "Select a Node to indent.".into();
+                        return;
+                    };
+                    let Some(parent) = selected.parent() else {
+                        self.status = "Cannot indent the Dummy root.".into();
+                        return;
+                    };
+                    let Some(index) = selected.last_index() else {
+                        self.status = "Indent failed: no index.".into();
+                        return;
+                    };
+                    if index == 0 {
+                        self.status = "Indent needs a previous sibling.".into();
+                        return;
+                    }
+                    let new_parent = parent.child(index - 1);
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Open a Guide before restructuring.".into();
+                        return;
+                    };
+                    let dest_index = match doc.guide().node(&new_parent) {
+                        Ok(node) => node.children().len(),
+                        Err(err) => {
+                            self.status = format!("Indent failed: {err}");
+                            return;
+                        }
+                    };
+                    match doc.move_node(&selected, &new_parent, dest_index) {
+                        Ok(path) => {
+                            self.after_tree_op(widgets, Some(path), "Indented");
+                        }
+                        Err(err) => {
+                            self.status = format!("Indent failed: {err}");
+                        }
+                    }
+                }
+                Msg::Outdent => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
+                    let Some(selected) = self.selected.clone() else {
+                        self.status = "Select a Node to outdent.".into();
+                        return;
+                    };
+                    let Some(parent) = selected.parent() else {
+                        self.status = "Cannot outdent the Dummy root.".into();
+                        return;
+                    };
+                    // Top-level under Dummy root cannot outdent further.
+                    let Some(grandparent) = parent.parent() else {
+                        self.status = "Already at top level.".into();
+                        return;
+                    };
+                    let Some(parent_index) = parent.last_index() else {
+                        self.status = "Outdent failed: no parent index.".into();
+                        return;
+                    };
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Open a Guide before restructuring.".into();
+                        return;
+                    };
+                    match doc.move_node(&selected, &grandparent, parent_index + 1) {
+                        Ok(path) => {
+                            self.after_tree_op(widgets, Some(path), "Outdented");
+                        }
+                        Err(err) => {
+                            self.status = format!("Outdent failed: {err}");
+                        }
+                    }
+                }
             }
         }
     }
@@ -429,6 +671,77 @@ mod ui {
                 .map_err(|e| e.to_string())?;
             self.body_dirty = false;
             Ok(())
+        }
+
+        /// Refresh the tree from the Core model and optionally select `path`.
+        fn after_tree_op(
+            &mut self,
+            widgets: &AppModelWidgets,
+            select: Option<NodePath>,
+            status: &str,
+        ) {
+            let Some(doc) = self.doc.as_ref() else {
+                return;
+            };
+            fill_tree(&self.tree_store, &doc.visible_tree());
+            self.tree_view.expand_all();
+            if let Some(path) = select {
+                // Clear so the selection-changed handler loads the body for `path`.
+                self.selected = None;
+                select_path_in_tree(&self.tree_view, &self.tree_store, &path);
+            }
+            self.status = status.into();
+            self.refresh_title(widgets);
+        }
+
+        fn reorder_selected(&mut self, widgets: &AppModelWidgets, delta: isize) {
+            if let Err(err) = self.commit_body_if_needed() {
+                self.status = format!("Could not apply body edit: {err}");
+                return;
+            }
+            let Some(selected) = self.selected.clone() else {
+                self.status = "Select a Node to reorder.".into();
+                return;
+            };
+            let Some(parent) = selected.parent() else {
+                self.status = "Cannot reorder the Dummy root.".into();
+                return;
+            };
+            let Some(index) = selected.last_index() else {
+                self.status = "Reorder failed: no index.".into();
+                return;
+            };
+            let Some(doc) = self.doc.as_mut() else {
+                self.status = "Open a Guide before restructuring.".into();
+                return;
+            };
+            let sibling_count = match doc.guide().node(&parent) {
+                Ok(node) => node.children().len(),
+                Err(err) => {
+                    self.status = format!("Reorder failed: {err}");
+                    return;
+                }
+            };
+            let new_index = index as isize + delta;
+            if new_index < 0 || new_index as usize >= sibling_count {
+                self.status = "Already at edge of siblings.".into();
+                return;
+            }
+            // move_node index is the insertion slot before removal adjustment.
+            let insert_at = if delta > 0 {
+                new_index as usize + 1
+            } else {
+                new_index as usize
+            };
+            match doc.move_node(&selected, &parent, insert_at) {
+                Ok(path) => {
+                    let label = if delta < 0 { "Moved up" } else { "Moved down" };
+                    self.after_tree_op(widgets, Some(path), label);
+                }
+                Err(err) => {
+                    self.status = format!("Reorder failed: {err}");
+                }
+            }
         }
     }
 
