@@ -19,13 +19,13 @@ Format v1 is a greenfield library and CLI for The Guide **v2** `.gde` Core model
 Requires a stable Rust toolchain (`rust-toolchain.toml`; install via rustup or Homebrew `rust`).
 
 - Library: `nextguide-gde` (`crates/nextguide-gde`)
-- CLI: `nextguide` (`crates/nextguide`) — `dump` and `check` (`--byte-stable` for owned goldens)
+- CLI: `nextguide-cli` (`crates/nextguide-cli`) — `dump` and `check` (`--byte-stable` for owned goldens)
 - Fixtures: `data/`
 
 ```bash
 cargo test
-cargo run -p nextguide -- dump data/ImportSample.gde
-cargo run -p nextguide -- check data/ImportSample.gde
-cargo run -p nextguide -- check --byte-stable data/canonical-golden.gde
+cargo run -p nextguide-cli -- dump data/ImportSample.gde
+cargo run -p nextguide-cli -- check data/ImportSample.gde
+cargo run -p nextguide-cli -- check --byte-stable data/canonical-golden.gde
 ```
 

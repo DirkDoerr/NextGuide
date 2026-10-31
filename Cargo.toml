@@ -2,5 +2,5 @@
 resolver = "2"
 members = [
     "crates/nextguide-gde",
-    "crates/nextguide",
+    "crates/nextguide-cli",
 ]
