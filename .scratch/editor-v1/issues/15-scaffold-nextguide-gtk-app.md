@@ -4,8 +4,14 @@
 
 **Blocked by:** 12 — Rename Round-trip CLI to `nextguide-cli`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] Workspace builds binary `nextguide` (GTK4 + Relm4) linking `nextguide-gde`
-- [ ] App starts a window on a developer machine with GTK available
-- [ ] Thin smoke test exists or is explicitly deferred with a documented manual check if CI cannot run GTK yet
+- [x] Workspace builds binary `nextguide` (GTK4 + Relm4) linking `nextguide-gde`
+- [x] App starts a window on a developer machine with GTK available
+- [x] Thin smoke test exists or is explicitly deferred with a documented manual check if CI cannot run GTK yet
+
+## Answer
+
+Added workspace crate `crates/nextguide` (binary name **`nextguide`**) depending on `nextguide-gde`, with optional Relm4/GTK4 shell behind the default `ui` feature. Stub RelmApp window uses title `Untitled` and a placeholder label.
+
+CI / headless: workspace `default-members` are only `nextguide-gde` + `nextguide-cli`, so plain `cargo test` does not need GTK. CI also runs `cargo test -p nextguide --no-default-features` (window-title + fixture load via `load_guide`). Full UI smoke is **deferred** — manual check documented in README: install GTK4, `cargo run -p nextguide`, confirm Untitled stub window.

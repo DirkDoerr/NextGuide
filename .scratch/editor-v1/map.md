@@ -34,6 +34,7 @@ A buildable product **spec** for **Editor v1**: a cross-platform desktop editor 
 - [Preserve-through under edits](issues/09-preserve-through-under-edits.md): Bags follow Node/Guide; kept on title/RTF/move; dropped on delete; empty on insert; still private
 - [Packaging and distribution](issues/10-packaging-and-distribution.md): First ship Win+macOS bundles (+GTK); `nextguide-cli` same release; manual updates; signing optional; Linux packages later
 - [Testing and proof bar](issues/11-testing-and-proof-bar.md): Keep Format v1 gates; mutation + `nextguide-rtf` primary; thin UI smoke; The Guide human-only
+- [Scaffold `nextguide` GTK app](issues/15-scaffold-nextguide-gtk-app.md): Relm4/GTK4 binary `nextguide` + `nextguide-gde` link; UI smoke deferred (manual); headless helper tests via `--no-default-features`
 
 ## Not yet specified
 

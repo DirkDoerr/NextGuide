@@ -20,6 +20,11 @@ jobs:
       - name: Test
         run: cargo test
 
+      # Editor UI (GTK/Relm4) is not exercised in CI yet; keep the in-process
+      # nextguide-gde link covered without requiring libgtk.
+      - name: Editor helpers (no GTK)
+        run: cargo test -p nextguide --no-default-features
+
       - name: Structural check (ImportSample)
         run: cargo run -p nextguide-cli --quiet -- check data/ImportSample.gde
 
