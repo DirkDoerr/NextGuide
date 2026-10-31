@@ -6,5 +6,5 @@
 *.gde
 
 # except
-data/ImportSample.gde
-data/canonical-golden.gde
+!data/ImportSample.gde
+!data/canonical-golden.gde
