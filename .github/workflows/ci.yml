@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test
+
+      - name: Structural check (ImportSample)
+        run: cargo run -p nextguide --quiet -- check data/ImportSample.gde
+
+      - name: Byte-stable check (owned golden)
+        run: cargo run -p nextguide --quiet -- check --byte-stable data/canonical-golden.gde
