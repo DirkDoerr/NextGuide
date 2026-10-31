@@ -25,6 +25,12 @@ A buildable product spec for **Format v1**: a greenfield library plus CLI that R
 - [Rust package layout](issues/07-rust-package-layout.md): Workspace — `crates/nextguide-gde` (lib) + `crates/nextguide` (bin); fixtures stay in `data/`
 - [Error model](issues/08-error-model.md): Fail closed; typed I/O / unsupported / corrupt; no partial Guide; CLI exits 0/1/2
 - [Kaitai as reference](issues/09-kaitai-as-reference.md): Read-only cross-check allowed; no codegen/vendoring as codec; not normative vs guide.c
+- [Scaffold Format v1 Cargo workspace](issues/10-scaffold-cargo-workspace.md): Workspace `crates/nextguide-gde` + `crates/nextguide`; fixtures via `data/`
+- [Load v2 Guide into Core model](issues/11-load-core-model.md): `load_path`/`load_bytes` → Core tree; fail-closed typed errors
+- [Save + Structural Round-trip](issues/12-save-structural-round-trip.md): `save_*` + `check_structural`; Preserve-through private; ImportSample passes
+- [Byte-stable canonical golden](issues/13-byte-stable-golden.md): `data/canonical-golden.gde` + `check_byte_stable`
+- [`nextguide dump`](issues/14-nextguide-dump.md): Core tree dump; exits 0/1/2
+- [`nextguide check`](issues/15-nextguide-check.md): Structural / `--byte-stable` via library helpers
 
 ## Not yet specified
 

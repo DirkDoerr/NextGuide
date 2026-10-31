@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Format v1 — Guide `.gde` library and CLI
 

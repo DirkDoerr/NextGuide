@@ -4,8 +4,12 @@
 
 **Blocked by:** 11 — Load v2 Guide into Core model (fail closed)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `nextguide dump <file.gde>` prints Core-model tree information
-- [ ] Exit codes: `0` success, `1` load failure, `2` usage/args
-- [ ] Smoke test or documented manual check covers `ImportSample.gde`
+- [x] `nextguide dump <file.gde>` prints Core-model tree information
+- [x] Exit codes: `0` success, `1` load failure, `2` usage/args
+- [x] Smoke test or documented manual check covers `ImportSample.gde`
+
+## Answer
+
+`nextguide dump` prints indented titles with RTF lengths; exit 0/1/2; CLI smoke covers ImportSample.

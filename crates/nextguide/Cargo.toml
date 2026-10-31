@@ -1,0 +1,14 @@
+[package]
+name = "nextguide"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "CLI for Format v1 Guide .gde round-trip checks"
+publish = false
+
+[[bin]]
+name = "nextguide"
+path = "src/main.rs"
+
+[dependencies]
+nextguide-gde = { path = "../nextguide-gde" }

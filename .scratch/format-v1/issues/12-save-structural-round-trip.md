@@ -4,9 +4,13 @@
 
 **Blocked by:** 11 — Load v2 Guide into Core model (fail closed)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `save` to path and to bytes works for a loaded Guide
-- [ ] Structural Round-trip helper passes for `data/ImportSample.gde` (and similar)
-- [ ] Preserve-through keeps non-Core/unknown attrs across save without Core API exposure
-- [ ] Greenfield v2 writer respects agreed layout assumptions (little-endian, 32-bit fake ids)
+- [x] `save` to path and to bytes works for a loaded Guide
+- [x] Structural Round-trip helper passes for `data/ImportSample.gde` (and similar)
+- [x] Preserve-through keeps non-Core/unknown attrs across save without Core API exposure
+- [x] Greenfield v2 writer respects agreed layout assumptions (little-endian, 32-bit fake ids)
+
+## Answer
+
+`save_path`/`save_bytes` + `check_structural`; ImportSample Structural Round-trip passes; Preserve-through verified via idempotent rewrite and attr payload presence; writer uses LE 32-bit fake ids.

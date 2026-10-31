@@ -4,9 +4,13 @@
 
 **Blocked by:** 10 — Scaffold Format v1 Cargo workspace
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `load` from path and from bytes returns a Core-model `Guide`
-- [ ] Dummy root, titles, opaque RTF bodies, and child order are observable
-- [ ] Non-v2 / corrupt / truncated inputs return typed errors; no partial `Guide`
-- [ ] Library tests cover `data/ImportSample.gde` and fail-closed cases
+- [x] `load` from path and from bytes returns a Core-model `Guide`
+- [x] Dummy root, titles, opaque RTF bodies, and child order are observable
+- [x] Non-v2 / corrupt / truncated inputs return typed errors; no partial `Guide`
+- [x] Library tests cover `data/ImportSample.gde` and fail-closed cases
+
+## Answer
+
+`load_path` / `load_bytes` parse v2 little-endian 32-bit layout into `Guide`/`Node` (Dummy root visible). Typed `Error::{Io, Unsupported, Corrupt}`; v1 marker and non-v2 versions are Unsupported.

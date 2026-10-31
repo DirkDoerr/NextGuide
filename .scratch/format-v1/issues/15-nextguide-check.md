@@ -4,9 +4,13 @@
 
 **Blocked by:** 12 — Save + Structural Round-trip + Preserve-through; 13 — Byte-stable canonical golden
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] `nextguide check <file.gde>` runs Structural Round-trip using the library helper
-- [ ] `nextguide check --byte-stable <file.gde>` runs Byte-stable Round-trip using the library helper
-- [ ] Exit codes: `0` pass, `1` failure, `2` usage/args; failure details on stderr
-- [ ] Smoke tests cover structural check on `ImportSample.gde` and byte-stable on the owned golden
+- [x] `nextguide check <file.gde>` runs Structural Round-trip using the library helper
+- [x] `nextguide check --byte-stable <file.gde>` runs Byte-stable Round-trip using the library helper
+- [x] Exit codes: `0` pass, `1` failure, `2` usage/args; failure details on stderr
+- [x] Smoke tests cover structural check on `ImportSample.gde` and byte-stable on the owned golden
+
+## Answer
+
+`check` delegates to `check_structural` / `check_byte_stable`; exit 0/1/2 with stderr; smokes for ImportSample + `canonical-golden.gde`.

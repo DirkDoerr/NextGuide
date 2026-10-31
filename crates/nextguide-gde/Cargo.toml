@@ -1,0 +1,9 @@
+[package]
+name = "nextguide-gde"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Core-model codec for The Guide v2 .gde files"
+publish = false
+
+[dependencies]
