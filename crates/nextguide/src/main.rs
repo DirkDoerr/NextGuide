@@ -8,7 +8,10 @@ mod ui {
 
     use nextguide_gde::NodePath;
     use nextguide_rtf::{load as load_rtf, Block, Document, LoadBody, Run, SpanStyle};
-    use nextguide::{window_title_for_path, EditorDoc, TreeRow, APP_ID};
+    use nextguide::{
+        default_recent_store_path, needs_dirty_prompt, window_title_for_path, DirtyPromptChoice,
+        EditorDoc, RecentFiles, TreeRow, APP_ID,
+    };
     use relm4::gtk;
     use relm4::gtk::glib;
     use relm4::gtk::prelude::*;
@@ -16,6 +19,15 @@ mod ui {
 
     const COL_TITLE: i32 = 0;
     const COL_PATH: i32 = 1;
+
+    /// Action deferred until a dirty Save/Discard/Cancel prompt resolves.
+    #[derive(Clone, Debug)]
+    enum PendingAction {
+        New,
+        OpenDialog,
+        OpenPath(PathBuf),
+        Quit,
+    }
 
     struct AppModel {
         doc: Option<EditorDoc>,
@@ -29,16 +41,25 @@ mod ui {
         suppress_body_signal: Rc<Cell<bool>>,
         /// True when the body pane text differs from the last committed Node body.
         body_dirty: bool,
+        recent: RecentFiles,
+        recent_store: PathBuf,
+        pending: Option<PendingAction>,
+        recent_menu: gtk::Box,
     }
 
     #[derive(Debug)]
     enum Msg {
+        New,
         OpenDialog,
         Opened(PathBuf),
         OpenFailed(String),
         Save,
+        SaveAsDialog,
+        SaveAs(PathBuf),
         Saved,
         SaveFailed(String),
+        DirtyChoice(DirtyPromptChoice),
+        RequestQuit,
         SelectPath(NodePath),
         ClearBody,
         TitleEdited { path: NodePath, title: String },
@@ -77,12 +98,32 @@ mod ui {
 
                     gtk::HeaderBar {
                         pack_start = &gtk::Button {
+                            set_label: "New",
+                            connect_clicked => Msg::New,
+                        },
+                        pack_start = &gtk::Button {
                             set_label: "Open",
                             connect_clicked => Msg::OpenDialog,
                         },
                         pack_start = &gtk::Button {
                             set_label: "Save",
                             connect_clicked => Msg::Save,
+                        },
+                        pack_start = &gtk::Button {
+                            set_label: "Save As",
+                            connect_clicked => Msg::SaveAsDialog,
+                        },
+                        pack_start = &gtk::MenuButton {
+                            set_label: "Recent",
+                            #[wrap(Some)]
+                            set_popover = &gtk::Popover {
+                                #[name = "recent_menu"]
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 2,
+                                    set_margin_all: 6,
+                                },
+                            },
                         },
                         pack_start = &gtk::MenuButton {
                             set_label: "Tree",
@@ -163,8 +204,9 @@ mod ui {
                             #[wrap(Some)]
                             set_child = body_view = &gtk::TextView {
                                 set_buffer: Some(&model.body_buffer),
-                                set_editable: true,
-                                set_cursor_visible: true,
+                                // Empty / no-selection sessions keep the body disabled.
+                                set_editable: false,
+                                set_cursor_visible: false,
                                 set_wrap_mode: gtk::WrapMode::Word,
                                 set_left_margin: 8,
                                 set_right_margin: 8,
@@ -258,21 +300,29 @@ mod ui {
                 body_sender.input(Msg::BodyChanged);
             });
 
+            let recent_store = default_recent_store_path();
+            let recent = RecentFiles::load_from(&recent_store).unwrap_or_default();
+
             let model = AppModel {
-                doc: None,
+                doc: Some(EditorDoc::new()),
                 selected: None,
-                status: "Open a Guide (.gde) to begin.".into(),
+                status: "Untitled Guide — add a Node to begin.".into(),
                 tree_store,
                 tree_view,
                 body_buffer: body_buffer.clone(),
                 body_view: gtk::TextView::new(),
                 suppress_body_signal,
                 body_dirty: false,
+                recent,
+                recent_store,
+                pending: None,
+                recent_menu: gtk::Box::new(gtk::Orientation::Vertical, 2),
             };
 
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
             let body_view = widgets.body_view.clone();
+            let recent_menu = widgets.recent_menu.clone();
 
             // Ctrl/Cmd+B/I/U toggle pragmatic subset styles on the selection.
             let key = gtk::EventControllerKey::new();
@@ -297,14 +347,24 @@ mod ui {
             });
             body_view.add_controller(key);
 
-            let model = AppModel { body_view, ..model };
+            let quit_sender = sender.clone();
+            root.connect_close_request(move |_| {
+                quit_sender.input(Msg::RequestQuit);
+                glib::Propagation::Stop
+            });
+
+            let model = AppModel {
+                body_view,
+                recent_menu,
+                ..model
+            };
+            model.rebuild_recent_menu(&sender);
             model.refresh_title(&widgets);
 
             if let Some(path) = init {
                 sender.input(Msg::Opened(path));
             }
 
-            let _ = root;
             ComponentParts { model, widgets }
         }
 
@@ -316,59 +376,52 @@ mod ui {
             root: &Self::Root,
         ) {
             match message {
-                Msg::OpenDialog => {
-                    let dialog = gtk::FileChooserNative::builder()
-                        .title("Open Guide")
-                        .action(gtk::FileChooserAction::Open)
-                        .accept_label("Open")
-                        .cancel_label("Cancel")
-                        .modal(true)
-                        .transient_for(root)
-                        .build();
-                    let filter = gtk::FileFilter::new();
-                    filter.set_name(Some("The Guide (.gde)"));
-                    filter.add_pattern("*.gde");
-                    dialog.add_filter(&filter);
-
-                    let dialog_sender = sender.clone();
-                    dialog.connect_response(move |dialog, response| {
-                        if response == gtk::ResponseType::Accept {
-                            if let Some(file) = dialog.file() {
-                                if let Some(path) = file.path() {
-                                    dialog_sender.input(Msg::Opened(path));
-                                    return;
-                                }
-                            }
-                            dialog_sender
-                                .input(Msg::OpenFailed("No file selected".into()));
-                        }
-                    });
-                    dialog.show();
+                Msg::New => {
+                    self.request_with_dirty_prompt(
+                        widgets,
+                        &sender,
+                        root,
+                        PendingAction::New,
+                    );
                 }
-                Msg::Opened(path) => match EditorDoc::open(&path) {
-                    Ok(doc) => {
-                        self.selected = None;
-                        self.body_dirty = false;
-                        self.doc = Some(doc);
-                        fill_tree(
-                            &self.tree_store,
-                            &self.doc.as_ref().unwrap().visible_tree(),
+                Msg::OpenDialog => {
+                    self.request_with_dirty_prompt(
+                        widgets,
+                        &sender,
+                        root,
+                        PendingAction::OpenDialog,
+                    );
+                }
+                Msg::Opened(path) => {
+                    // CLI / Recent may open while dirty — prompt first.
+                    if self.pending.is_none()
+                        && needs_dirty_prompt(self.session_dirty())
+                    {
+                        self.request_with_dirty_prompt(
+                            widgets,
+                            &sender,
+                            root,
+                            PendingAction::OpenPath(path),
                         );
-                        self.tree_view.expand_all();
-                        self.set_body_text("");
-                        self.status = format!("Opened {}", path.display());
-                        self.refresh_title(widgets);
+                        return;
                     }
-                    Err(err) => {
-                        self.status = format!("Open failed: {err}");
-                    }
-                },
+                    self.load_opened(widgets, &sender, path);
+                }
                 Msg::OpenFailed(msg) => {
                     self.status = format!("Open failed: {msg}");
                 }
                 Msg::Save => {
                     if let Err(err) = self.commit_body_if_needed() {
                         sender.input(Msg::SaveFailed(err));
+                        return;
+                    }
+                    let needs_as = self
+                        .doc
+                        .as_ref()
+                        .map(|d| d.path().is_none())
+                        .unwrap_or(true);
+                    if needs_as {
+                        self.show_save_as_dialog(root, &sender);
                         return;
                     }
                     let Some(doc) = self.doc.as_mut() else {
@@ -380,12 +433,94 @@ mod ui {
                         Err(err) => sender.input(Msg::SaveFailed(err.to_string())),
                     }
                 }
+                Msg::SaveAsDialog => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        sender.input(Msg::SaveFailed(err));
+                        return;
+                    }
+                    self.show_save_as_dialog(root, &sender);
+                }
+                Msg::SaveAs(path) => {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        sender.input(Msg::SaveFailed(err));
+                        return;
+                    }
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Nothing to save.".into();
+                        return;
+                    };
+                    match doc.save_as(&path) {
+                        Ok(()) => {
+                            self.remember_recent(&path, &sender);
+                            sender.input(Msg::Saved);
+                            if let Some(pending) = self.pending.take() {
+                                self.run_pending(widgets, &sender, root, pending);
+                            }
+                        }
+                        Err(err) => sender.input(Msg::SaveFailed(err.to_string())),
+                    }
+                }
                 Msg::Saved => {
                     self.status = "Saved.".into();
                     self.refresh_title(widgets);
                 }
                 Msg::SaveFailed(msg) => {
                     self.status = format!("Save failed: {msg}");
+                }
+                Msg::DirtyChoice(choice) => match choice {
+                    DirtyPromptChoice::Cancel => {
+                        self.pending = None;
+                        self.status = "Cancelled.".into();
+                    }
+                    DirtyPromptChoice::Discard => {
+                        if let Some(pending) = self.pending.take() {
+                            // Revert unsaved edits so a follow-up Open chooser
+                            // does not re-prompt for the abandoned dirty state.
+                            self.discard_edits(widgets);
+                            self.run_pending(widgets, &sender, root, pending);
+                        }
+                    }
+                    DirtyPromptChoice::Save => {
+                        if let Err(err) = self.commit_body_if_needed() {
+                            self.pending = None;
+                            sender.input(Msg::SaveFailed(err));
+                            return;
+                        }
+                        let needs_as = self
+                            .doc
+                            .as_ref()
+                            .map(|d| d.path().is_none())
+                            .unwrap_or(true);
+                        if needs_as {
+                            self.show_save_as_dialog(root, &sender);
+                            return;
+                        }
+                        let Some(doc) = self.doc.as_mut() else {
+                            self.pending = None;
+                            self.status = "Nothing to save.".into();
+                            return;
+                        };
+                        match doc.save() {
+                            Ok(()) => {
+                                self.refresh_title(widgets);
+                                if let Some(pending) = self.pending.take() {
+                                    self.run_pending(widgets, &sender, root, pending);
+                                }
+                            }
+                            Err(err) => {
+                                self.pending = None;
+                                sender.input(Msg::SaveFailed(err.to_string()));
+                            }
+                        }
+                    }
+                },
+                Msg::RequestQuit => {
+                    self.request_with_dirty_prompt(
+                        widgets,
+                        &sender,
+                        root,
+                        PendingAction::Quit,
+                    );
                 }
                 Msg::SelectPath(path) => {
                     if self.selected.as_ref() == Some(&path) {
@@ -408,7 +543,7 @@ mod ui {
                             );
                             self.body_dirty = false;
                             self.selected = Some(path.clone());
-                            self.body_view.set_editable(true);
+                            self.set_body_editable(true);
                             self.status = if view.soft_fail {
                                 format!(
                                     "Node {path} (unparseable RTF — edit replaces original bytes)"
@@ -420,6 +555,7 @@ mod ui {
                         Err(err) => {
                             self.set_body_text("");
                             self.selected = None;
+                            self.set_body_editable(false);
                             self.status = format!("Select failed: {err}");
                         }
                     }
@@ -433,6 +569,7 @@ mod ui {
                     self.selected = None;
                     self.body_dirty = false;
                     self.set_body_text("");
+                    self.set_body_editable(false);
                 }
                 Msg::TitleEdited { path, title } => {
                     let Some(doc) = self.doc.as_mut() else {
@@ -542,6 +679,7 @@ mod ui {
                             self.selected = None;
                             self.body_dirty = false;
                             self.set_body_text("");
+                            self.set_body_editable(false);
                             self.after_tree_op(widgets, None, &format!("Deleted {selected}"));
                         }
                         Err(err) => {
@@ -643,15 +781,244 @@ mod ui {
             self.suppress_body_signal.set(false);
         }
 
-        fn refresh_title(&self, widgets: &AppModelWidgets) {
-            let dirty = self
-                .doc
+        fn set_body_editable(&self, editable: bool) {
+            self.body_view.set_editable(editable);
+            self.body_view.set_cursor_visible(editable);
+        }
+
+        fn session_dirty(&self) -> bool {
+            self.doc
                 .as_ref()
                 .map(|d| d.is_dirty() || self.body_dirty)
-                .unwrap_or(false);
+                .unwrap_or(self.body_dirty)
+        }
+
+        fn refresh_title(&self, widgets: &AppModelWidgets) {
+            let dirty = self.session_dirty();
             let path = self.doc.as_ref().and_then(|d| d.path());
             let title = window_title_for_path(path, dirty);
             widgets.main_window.set_title(Some(&title));
+        }
+
+        fn request_with_dirty_prompt(
+            &mut self,
+            widgets: &AppModelWidgets,
+            sender: &ComponentSender<Self>,
+            root: &gtk::ApplicationWindow,
+            pending: PendingAction,
+        ) {
+            if needs_dirty_prompt(self.session_dirty()) {
+                self.pending = Some(pending);
+                self.show_dirty_prompt(root, sender);
+            } else {
+                self.run_pending(widgets, sender, root, pending);
+            }
+        }
+
+        fn show_dirty_prompt(
+            &self,
+            root: &gtk::ApplicationWindow,
+            sender: &ComponentSender<Self>,
+        ) {
+            let dialog = gtk::MessageDialog::builder()
+                .transient_for(root)
+                .modal(true)
+                .message_type(gtk::MessageType::Warning)
+                .text("Save changes before continuing?")
+                .secondary_text("Your Guide has unsaved changes.")
+                .build();
+            dialog.add_buttons(&[
+                (DirtyPromptChoice::Save.label(), gtk::ResponseType::Accept),
+                (DirtyPromptChoice::Discard.label(), gtk::ResponseType::Reject),
+                (DirtyPromptChoice::Cancel.label(), gtk::ResponseType::Cancel),
+            ]);
+            let dialog_sender = sender.clone();
+            dialog.connect_response(move |dialog, response| {
+                dialog.destroy();
+                let choice = match response {
+                    gtk::ResponseType::Accept => DirtyPromptChoice::Save,
+                    gtk::ResponseType::Reject => DirtyPromptChoice::Discard,
+                    _ => DirtyPromptChoice::Cancel,
+                };
+                dialog_sender.input(Msg::DirtyChoice(choice));
+            });
+            dialog.show();
+        }
+
+        fn show_open_dialog(&self, root: &gtk::ApplicationWindow, sender: &ComponentSender<Self>) {
+            let dialog = gtk::FileChooserNative::builder()
+                .title("Open Guide")
+                .action(gtk::FileChooserAction::Open)
+                .accept_label("Open")
+                .cancel_label("Cancel")
+                .modal(true)
+                .transient_for(root)
+                .build();
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("The Guide (.gde)"));
+            filter.add_pattern("*.gde");
+            dialog.add_filter(&filter);
+
+            let dialog_sender = sender.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Accept {
+                    if let Some(file) = dialog.file() {
+                        if let Some(path) = file.path() {
+                            dialog_sender.input(Msg::Opened(path));
+                            return;
+                        }
+                    }
+                    dialog_sender.input(Msg::OpenFailed("No file selected".into()));
+                }
+            });
+            dialog.show();
+        }
+
+        fn show_save_as_dialog(
+            &self,
+            root: &gtk::ApplicationWindow,
+            sender: &ComponentSender<Self>,
+        ) {
+            let dialog = gtk::FileChooserNative::builder()
+                .title("Save Guide As")
+                .action(gtk::FileChooserAction::Save)
+                .accept_label("Save")
+                .cancel_label("Cancel")
+                .modal(true)
+                .transient_for(root)
+                .build();
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("The Guide (.gde)"));
+            filter.add_pattern("*.gde");
+            dialog.add_filter(&filter);
+
+            let dialog_sender = sender.clone();
+            dialog.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Accept {
+                    if let Some(file) = dialog.file() {
+                        if let Some(mut path) = file.path() {
+                            if path.extension().is_none() {
+                                path.set_extension("gde");
+                            }
+                            dialog_sender.input(Msg::SaveAs(path));
+                            return;
+                        }
+                    }
+                    dialog_sender.input(Msg::SaveFailed("No file selected".into()));
+                } else {
+                    // Cancelled Save As while a dirty-prompt action was pending.
+                    dialog_sender.input(Msg::DirtyChoice(DirtyPromptChoice::Cancel));
+                }
+            });
+            dialog.show();
+        }
+
+        fn run_pending(
+            &mut self,
+            widgets: &AppModelWidgets,
+            sender: &ComponentSender<Self>,
+            root: &gtk::ApplicationWindow,
+            pending: PendingAction,
+        ) {
+            match pending {
+                PendingAction::New => self.replace_with_new(widgets),
+                PendingAction::OpenDialog => self.show_open_dialog(root, sender),
+                PendingAction::OpenPath(path) => self.load_opened(widgets, sender, path),
+                PendingAction::Quit => {
+                    widgets.main_window.destroy();
+                }
+            }
+        }
+
+        fn discard_edits(&mut self, widgets: &AppModelWidgets) {
+            self.body_dirty = false;
+            let restored = match self.doc.as_ref().and_then(|d| d.path().map(|p| p.to_path_buf()))
+            {
+                Some(path) => EditorDoc::open(path).unwrap_or_else(|_| EditorDoc::new()),
+                None => EditorDoc::new(),
+            };
+            self.doc = Some(restored);
+            self.selected = None;
+            fill_tree(
+                &self.tree_store,
+                &self.doc.as_ref().map(|d| d.visible_tree()).unwrap_or_default(),
+            );
+            self.tree_view.expand_all();
+            self.set_body_text("");
+            self.set_body_editable(false);
+            self.refresh_title(widgets);
+        }
+
+        fn replace_with_new(&mut self, widgets: &AppModelWidgets) {
+            self.doc = Some(EditorDoc::new());
+            self.selected = None;
+            self.body_dirty = false;
+            self.pending = None;
+            fill_tree(&self.tree_store, &[]);
+            self.set_body_text("");
+            self.set_body_editable(false);
+            self.status = "Untitled Guide — add a Node to begin.".into();
+            self.refresh_title(widgets);
+        }
+
+        fn load_opened(
+            &mut self,
+            widgets: &AppModelWidgets,
+            sender: &ComponentSender<Self>,
+            path: PathBuf,
+        ) {
+            match EditorDoc::open(&path) {
+                Ok(doc) => {
+                    self.selected = None;
+                    self.body_dirty = false;
+                    self.pending = None;
+                    self.doc = Some(doc);
+                    fill_tree(
+                        &self.tree_store,
+                        &self.doc.as_ref().unwrap().visible_tree(),
+                    );
+                    self.tree_view.expand_all();
+                    self.set_body_text("");
+                    self.set_body_editable(false);
+                    self.status = format!("Opened {}", path.display());
+                    self.remember_recent(&path, sender);
+                    self.refresh_title(widgets);
+                }
+                Err(err) => {
+                    self.status = format!("Open failed: {err}");
+                }
+            }
+        }
+
+        fn remember_recent(&mut self, path: &std::path::Path, sender: &ComponentSender<Self>) {
+            self.recent.record(path.to_path_buf());
+            let _ = self.recent.save_to(&self.recent_store);
+            self.rebuild_recent_menu(sender);
+        }
+
+        fn rebuild_recent_menu(&self, sender: &ComponentSender<Self>) {
+            while let Some(child) = self.recent_menu.first_child() {
+                self.recent_menu.remove(&child);
+            }
+            if self.recent.paths().is_empty() {
+                let empty = gtk::Label::new(Some("No recent Guides"));
+                empty.set_margin_all(4);
+                self.recent_menu.append(&empty);
+                return;
+            }
+            for path in self.recent.paths() {
+                let label = path.display().to_string();
+                let button = gtk::Button::with_label(&label);
+                button.set_has_frame(false);
+                button.set_halign(gtk::Align::Start);
+                button.set_tooltip_text(Some(&label));
+                let path = path.clone();
+                let open_sender = sender.clone();
+                button.connect_clicked(move |_| {
+                    open_sender.input(Msg::Opened(path.clone()));
+                });
+                self.recent_menu.append(&button);
+            }
         }
 
         fn commit_body_if_needed(&mut self) -> std::result::Result<(), String> {
@@ -1038,7 +1405,7 @@ mod ui {
 }
 
 fn main() {
-    let initial = std::env::args_os().nth(1).map(std::path::PathBuf::from);
+    let initial = nextguide::launch_path_from_args(std::env::args_os());
 
     #[cfg(feature = "ui")]
     ui::run(initial);

@@ -4,9 +4,13 @@
 
 **Blocked by:** 17 — Edit titles and bodies + dirty/save
 
-**Status:** ready-for-agent
+**Status:** resolved
 
-- [ ] New / Open / Save As / quit honour dirty prompts
-- [ ] Window title shows Untitled or filename + dirty mark
-- [ ] Recent files lists up to 5 paths and opens them
-- [ ] `nextguide path.gde` opens that Guide; bare `nextguide` starts untitled New
+- [x] New / Open / Save As / quit honour dirty prompts
+- [x] Window title shows Untitled or filename + dirty mark
+- [x] Recent files lists up to 5 paths and opens them
+- [x] `nextguide path.gde` opens that Guide; bare `nextguide` starts untitled New
+
+## Answer
+
+`EditorDoc::new` / `save_as`; `DirtyPromptChoice` + `needs_dirty_prompt`; `RecentFiles` (MRU ≤5, `~/.config/nextguide/recent`); `launch_path_from_args`. Relm4: New/Open/Save/Save As/Recent, dirty Save/Discard/Cancel on replace/quit, bare launch = untitled New.

@@ -34,6 +34,15 @@ pub struct EditorDoc {
 }
 
 impl EditorDoc {
+    /// Untitled New Guide (Dummy root only; empty visible tree).
+    pub fn new() -> Self {
+        Self {
+            guide: Guide::new_empty(),
+            path: None,
+            dirty: false,
+        }
+    }
+
     /// Open a `.gde` from disk.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
@@ -136,10 +145,21 @@ impl EditorDoc {
         self.save_to(path)
     }
 
-    /// Persist the Guide to `path` and clear dirty.
+    /// Persist the Guide to `path`, bind the session to that path, and clear dirty.
     ///
     /// Untouched bodies keep original opaque bytes; bodies updated via
     /// [`set_body`] are already subset-rewritten on the Guide.
+    pub fn save_as(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        nextguide_gde::save_path(&self.guide, path)?;
+        self.path = Some(path.to_path_buf());
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Persist the Guide to `path` and clear dirty without rebinding the session path.
+    ///
+    /// Prefer [`save_as`] for Save As / first save of an untitled Guide.
     pub fn save_to(&mut self, path: impl AsRef<Path>) -> Result<()> {
         nextguide_gde::save_path(&self.guide, path)?;
         self.dirty = false;

@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use nextguide_gde::{check_structural, NodePath};
 use nextguide_rtf::{Document, Run, SpanStyle};
 use nextguide::{
-    body_view_from_rtf, load_guide, visible_tree, window_title_for_path, EditorDoc,
+    body_view_from_rtf, launch_path_from_args, load_guide, needs_dirty_prompt, visible_tree,
+    window_title_for_path, DirtyPromptChoice, EditorDoc, RecentFiles,
 };
 
 fn repo_data(name: &str) -> PathBuf {
@@ -21,6 +22,117 @@ fn repo_data(name: &str) -> PathBuf {
 #[test]
 fn bare_launch_window_title_is_untitled() {
     assert_eq!(window_title_for_path(None, false), "Untitled");
+}
+
+#[test]
+fn new_guide_is_untitled_clean_and_empty_tree() {
+    let doc = EditorDoc::new();
+    assert!(doc.path().is_none());
+    assert!(!doc.is_dirty());
+    assert!(doc.visible_tree().is_empty());
+    assert_eq!(doc.guide().root().title(), "dummy");
+    assert_eq!(window_title_for_path(doc.path(), doc.is_dirty()), "Untitled");
+}
+
+#[test]
+fn save_as_writes_updates_path_and_clears_dirty() {
+    let mut doc = EditorDoc::new();
+    let page = doc
+        .insert_child(&NodePath::root(), 0)
+        .expect("insert top-level");
+    doc.set_title(&page, "Only").expect("title");
+    assert!(doc.is_dirty());
+
+    let out = std::env::temp_dir().join("nextguide-save-as.gde");
+    doc.save_as(&out).expect("save as");
+    assert!(!doc.is_dirty());
+    assert_eq!(doc.path(), Some(out.as_path()));
+    assert_eq!(
+        window_title_for_path(doc.path(), doc.is_dirty()),
+        "nextguide-save-as.gde"
+    );
+
+    let rewritten = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+    check_structural(&rewritten).expect("structural after save as");
+    let again = nextguide_gde::load_bytes(&rewritten).unwrap();
+    assert_eq!(again.root().children()[0].title(), "Only");
+}
+
+#[test]
+fn dirty_prompt_needed_only_when_dirty() {
+    assert!(!needs_dirty_prompt(false));
+    assert!(needs_dirty_prompt(true));
+}
+
+#[test]
+fn dirty_prompt_choice_labels_match_session_policy() {
+    assert_eq!(DirtyPromptChoice::Save.label(), "Save");
+    assert_eq!(DirtyPromptChoice::Discard.label(), "Discard");
+    assert_eq!(DirtyPromptChoice::Cancel.label(), "Cancel");
+}
+
+#[test]
+fn recent_files_records_mru_dedupes_and_caps_at_five() {
+    let mut recent = RecentFiles::new();
+    for i in 1..=6 {
+        recent.record(PathBuf::from(format!("/tmp/g{i}.gde")));
+    }
+    let paths: Vec<_> = recent.paths().iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/tmp/g6.gde",
+            "/tmp/g5.gde",
+            "/tmp/g4.gde",
+            "/tmp/g3.gde",
+            "/tmp/g2.gde",
+        ]
+    );
+
+    recent.record(PathBuf::from("/tmp/g3.gde"));
+    let paths: Vec<_> = recent.paths().iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(
+        paths,
+        [
+            "/tmp/g3.gde",
+            "/tmp/g6.gde",
+            "/tmp/g5.gde",
+            "/tmp/g4.gde",
+            "/tmp/g2.gde",
+        ]
+    );
+}
+
+#[test]
+fn recent_files_round_trips_through_store_file() {
+    let store = std::env::temp_dir().join("nextguide-recent-test.txt");
+    let _ = std::fs::remove_file(&store);
+
+    let mut recent = RecentFiles::new();
+    recent.record(PathBuf::from("/tmp/a.gde"));
+    recent.record(PathBuf::from("/tmp/b.gde"));
+    recent.save_to(&store).expect("write recent");
+
+    let loaded = RecentFiles::load_from(&store).expect("load recent");
+    let paths: Vec<_> = loaded.paths().iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(paths, ["/tmp/b.gde", "/tmp/a.gde"]);
+    let _ = std::fs::remove_file(&store);
+}
+
+#[test]
+fn launch_path_from_args_opens_path_or_bare_new() {
+    assert_eq!(
+        launch_path_from_args(["nextguide".into()].into_iter()),
+        None,
+        "bare launch → untitled New"
+    );
+    assert_eq!(
+        launch_path_from_args(
+            ["nextguide".into(), "/tmp/ImportSample.gde".into()].into_iter()
+        ),
+        Some(PathBuf::from("/tmp/ImportSample.gde"))
+    );
 }
 
 #[test]
