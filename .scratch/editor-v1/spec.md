@@ -110,4 +110,4 @@ Ship **Editor v1**: a GTK4 + Relm4 desktop app binary **`nextguide`** that loads
 
 - Wayfinder map and resolved decision tickets: `.scratch/editor-v1/`; domain language: `GLOSSARY.md`; ADR-0003 records GTK/Relm4 vs rejected stacks.
 - Research inventories: `docs/research/editor-v1-desktop-ui-toolkits.md`, `docs/research/editor-v1-rtf-edit-interop.md`; normative `.gde` bytes still `docs/research/gde-v2-primary-sources.md`.
-- After this spec: `/to-tickets` for tracer-bullet implementation with blocking edges, then `/implement` (or `/implement-spec`).
+- Implementation tickets: `.scratch/editor-v1/issues/12`–`21` (`ready-for-agent`). Work blockers-first; frontier is 12, 13, and 14.

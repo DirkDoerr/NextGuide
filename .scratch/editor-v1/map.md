@@ -13,6 +13,7 @@ A buildable product **spec** for **Editor v1**: a cross-platform desktop editor 
 - Builds on Format v1 (`nextguide-gde` / `nextguide`); greenfield UI, not a The Guide fork
 - Charting posture: **decisions**, not deliverables — hand off to `/to-spec` when the frontier clears
 - Spec published: [`spec.md`](spec.md) (`ready-for-agent`)
+- Implementation tickets: [`12`](issues/12-rename-cli-to-nextguide-cli.md)–[`21`](issues/21-win-macos-release-bundles.md) (`ready-for-agent`)
 - Skills: `grilling` + `domain-modeling` for grilling tickets; `research` for research tickets; `prototype` only if a ticket is labelled that way
 - Standing prefs from charting: shared desktop codebase; in-process link to the Rust Core-model library; Dummy root hidden in UI; workflows open/save/save-as, navigate, edit title/body, restructure, new Guide
 - Standing prefs from toolkit grilling: **no web UI tech**; **GTK4 + Relm4**; app binary `nextguide`; CLI binary `nextguide-cli`
