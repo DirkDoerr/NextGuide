@@ -9,4 +9,4 @@ Inventory options with primary-source citations (official docs / project sources
 
 ## Answer
 
-Credible options cluster as Rust+webview (Tauri 2, Dioxus), pure-Rust GUIs (egui/eframe, iced, Slint, GPUI, Floem), and native toolkits with Rust bridges (GTK4/Relm4, CXX-Qt, Flutter+FRB); Electron+napi-rs is in-process but not a Rust host. Stock rich-text editing is strongest on GTK TextView+tags, Qt TextEdit, and webviews; most pure-Rust GUIs need custom or plain multiline. Full inventory (no winner): [`docs/research/editor-v1-desktop-ui-toolkits.md`](../../../../docs/research/editor-v1-desktop-ui-toolkits.md).
+Credible options cluster as Rust+webview (Tauri 2, Dioxus), pure-Rust GUIs (egui/eframe, iced, Slint, GPUI, Floem), and native toolkits with Rust bridges (GTK4/Relm4, CXX-Qt, Flutter+FRB); Electron+napi-rs is in-process but not a Rust host. Stock rich-text editing is strongest on GTK TextView+tags, Qt TextEdit, and webviews; most pure-Rust GUIs need custom or plain multiline. Full inventory (no winner): [`docs/research/editor-v1-desktop-ui-toolkits.md`](../../../docs/research/editor-v1-desktop-ui-toolkits.md).
