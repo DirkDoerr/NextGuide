@@ -21,6 +21,7 @@ A buildable product spec for **Format v1**: a greenfield library plus CLI that R
 - [Define Round-trip fixture equality](issues/02-round-trip-fixture-equality.md): Hybrid — Core-model structural Round-trip as CI gate; byte-stable Round-trip for canonical writer / owned goldens
 - [Non-Core attributes policy](issues/03-non-core-attributes-policy.md): Preserve-through — opaque load/save of non-Core and unknown attrs; Core API need not expose them
 - [Library API for Core model](issues/05-library-api-core-model.md): Codec + Core read model (load/save path+bytes; Guide/Node title+opaque RTF+children; no edit/RTF API; dummy root visible; Preserve-through private)
+- [CLI Round-trip surface](issues/06-cli-round-trip-surface.md): `nextguide dump` + `nextguide check` (Structural; `--byte-stable` for Byte-stable); exit 0/non-zero
 
 ## Not yet specified
 
