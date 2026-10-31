@@ -35,3 +35,7 @@ _Avoid_: byte-identical (when only the Core model must match)
 **Byte-stable Round-trip**:
 A load→save cycle whose output `.gde` bytes equal the input under Format v1’s canonical writer (used for owned golden fixtures).
 _Avoid_: bit-exact (prefer Byte-stable Round-trip)
+
+**Preserve-through**:
+Format v1 codec behaviour that keeps non-Core and unknown `.gde` attributes opaque across load and save so The Guide does not lose them, without exposing them on the Core-model API.
+_Avoid_: passthrough, strip-on-write (when Preserve-through is meant)
