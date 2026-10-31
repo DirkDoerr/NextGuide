@@ -2,10 +2,12 @@
 
 #[cfg(feature = "ui")]
 mod ui {
+    use std::cell::Cell;
     use std::path::PathBuf;
+    use std::rc::Rc;
 
     use nextguide_gde::NodePath;
-    use nextguide_rtf::{load as load_rtf, Block, Document, LoadBody, Run};
+    use nextguide_rtf::{load as load_rtf, Block, Document, LoadBody, Run, SpanStyle};
     use nextguide::{window_title_for_path, EditorDoc, TreeRow, APP_ID};
     use relm4::gtk;
     use relm4::gtk::glib;
@@ -17,11 +19,16 @@ mod ui {
 
     struct AppModel {
         doc: Option<EditorDoc>,
-        title: String,
+        selected: Option<NodePath>,
         status: String,
         tree_store: gtk::TreeStore,
         tree_view: gtk::TreeView,
         body_buffer: gtk::TextBuffer,
+        body_view: gtk::TextView,
+        /// When true, buffer change signals are ignored (programmatic fills).
+        suppress_body_signal: Rc<Cell<bool>>,
+        /// True when the body pane text differs from the last committed Node body.
+        body_dirty: bool,
     }
 
     #[derive(Debug)]
@@ -34,6 +41,8 @@ mod ui {
         SaveFailed(String),
         SelectPath(NodePath),
         ClearBody,
+        TitleEdited { path: NodePath, title: String },
+        BodyChanged,
     }
 
     #[relm4::component]
@@ -46,7 +55,7 @@ mod ui {
         view! {
             #[root]
             main_window = gtk::ApplicationWindow {
-                set_title: Some(model.title.as_str()),
+                set_title: Some("Untitled"),
                 set_default_size: (960, 640),
 
                 gtk::Box {
@@ -85,10 +94,10 @@ mod ui {
                             set_vexpand: true,
 
                             #[wrap(Some)]
-                            set_child = &gtk::TextView {
+                            set_child = body_view = &gtk::TextView {
                                 set_buffer: Some(&model.body_buffer),
-                                set_editable: false,
-                                set_cursor_visible: false,
+                                set_editable: true,
+                                set_cursor_visible: true,
                                 set_wrap_mode: gtk::WrapMode::Word,
                                 set_left_margin: 8,
                                 set_right_margin: 8,
@@ -122,11 +131,24 @@ mod ui {
             tree_view.set_activate_on_single_click(true);
 
             let title_cell = gtk::CellRendererText::new();
+            title_cell.set_editable(true);
             let column = gtk::TreeViewColumn::new();
             column.set_title("Title");
             column.pack_start(&title_cell, true);
             column.add_attribute(&title_cell, "text", COL_TITLE);
             tree_view.append_column(&column);
+
+            let store_for_edit = tree_store.clone();
+            let edit_sender = sender.clone();
+            title_cell.connect_edited(move |_cell, tree_path, new_text| {
+                if let Some(iter) = store_for_edit.iter(&tree_path) {
+                    let path_str: String = store_for_edit.get(&iter, COL_PATH);
+                    edit_sender.input(Msg::TitleEdited {
+                        path: path_from_string(&path_str),
+                        title: new_text.to_string(),
+                    });
+                }
+            });
 
             let sel_sender = sender.clone();
             tree_view.selection().connect_changed(move |selection| {
@@ -146,24 +168,70 @@ mod ui {
             italic.set_style(gtk::pango::Style::Italic);
             let underline = gtk::TextTag::new(Some("underline"));
             underline.set_underline(gtk::pango::Underline::Single);
+            // Structural markers for list lines (not visible styles). Prefix text is
+            // display-only; commit uses these tags so "1. Introduction" paragraphs stay paragraphs.
+            let list_bullet = gtk::TextTag::new(Some("list-bullet"));
+            let list_numbered = gtk::TextTag::new(Some("list-numbered"));
             tag_table.add(&bold);
             tag_table.add(&italic);
             tag_table.add(&underline);
+            tag_table.add(&list_bullet);
+            tag_table.add(&list_numbered);
             let body_buffer = gtk::TextBuffer::builder()
                 .tag_table(&tag_table)
                 .build();
 
+            let suppress_body_signal = Rc::new(Cell::new(false));
+            let body_sender = sender.clone();
+            let suppress = suppress_body_signal.clone();
+            body_buffer.connect_changed(move |_| {
+                if suppress.get() {
+                    return;
+                }
+                body_sender.input(Msg::BodyChanged);
+            });
+
             let model = AppModel {
                 doc: None,
-                title: window_title_for_path(None),
+                selected: None,
                 status: "Open a Guide (.gde) to begin.".into(),
                 tree_store,
                 tree_view,
-                body_buffer,
+                body_buffer: body_buffer.clone(),
+                body_view: gtk::TextView::new(),
+                suppress_body_signal,
+                body_dirty: false,
             };
 
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
+            let body_view = widgets.body_view.clone();
+
+            // Ctrl/Cmd+B/I/U toggle pragmatic subset styles on the selection.
+            let key = gtk::EventControllerKey::new();
+            let buf_for_keys = body_buffer;
+            let key_sender = sender.clone();
+            key.connect_key_pressed(move |_, keyval, _keycode, mods| {
+                let shortcut = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                    || mods.contains(gtk::gdk::ModifierType::META_MASK);
+                if !shortcut {
+                    return glib::Propagation::Proceed;
+                }
+                let tag = match keyval {
+                    gtk::gdk::Key::b | gtk::gdk::Key::B => "bold",
+                    gtk::gdk::Key::i | gtk::gdk::Key::I => "italic",
+                    gtk::gdk::Key::u | gtk::gdk::Key::U => "underline",
+                    _ => return glib::Propagation::Proceed,
+                };
+                if toggle_style_tag(&buf_for_keys, tag) {
+                    key_sender.input(Msg::BodyChanged);
+                }
+                glib::Propagation::Stop
+            });
+            body_view.add_controller(key);
+
+            let model = AppModel { body_view, ..model };
+            model.refresh_title(&widgets);
 
             if let Some(path) = init {
                 sender.input(Msg::Opened(path));
@@ -212,13 +280,17 @@ mod ui {
                 }
                 Msg::Opened(path) => match EditorDoc::open(&path) {
                     Ok(doc) => {
-                        self.title = window_title_for_path(Some(&path));
-                        widgets.main_window.set_title(Some(&self.title));
-                        fill_tree(&self.tree_store, &doc.visible_tree());
-                        self.tree_view.expand_all();
-                        self.body_buffer.set_text("");
-                        self.status = format!("Opened {}", path.display());
+                        self.selected = None;
+                        self.body_dirty = false;
                         self.doc = Some(doc);
+                        fill_tree(
+                            &self.tree_store,
+                            &self.doc.as_ref().unwrap().visible_tree(),
+                        );
+                        self.tree_view.expand_all();
+                        self.set_body_text("");
+                        self.status = format!("Opened {}", path.display());
+                        self.refresh_title(widgets);
                     }
                     Err(err) => {
                         self.status = format!("Open failed: {err}");
@@ -228,46 +300,135 @@ mod ui {
                     self.status = format!("Open failed: {msg}");
                 }
                 Msg::Save => {
-                    let Some(doc) = &self.doc else {
+                    if let Err(err) = self.commit_body_if_needed() {
+                        sender.input(Msg::SaveFailed(err));
+                        return;
+                    }
+                    let Some(doc) = self.doc.as_mut() else {
                         self.status = "Nothing to save.".into();
                         return;
                     };
-                    match doc.save_unchanged() {
+                    match doc.save() {
                         Ok(()) => sender.input(Msg::Saved),
                         Err(err) => sender.input(Msg::SaveFailed(err.to_string())),
                     }
                 }
                 Msg::Saved => {
-                    self.status = "Saved (unchanged bodies preserved).".into();
+                    self.status = "Saved.".into();
+                    self.refresh_title(widgets);
                 }
                 Msg::SaveFailed(msg) => {
                     self.status = format!("Save failed: {msg}");
                 }
                 Msg::SelectPath(path) => {
+                    if self.selected.as_ref() == Some(&path) {
+                        return;
+                    }
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
                     let Some(doc) = &self.doc else {
                         return;
                     };
                     match doc.body_view(&path) {
                         Ok(view) => {
-                            apply_body_to_buffer(&self.body_buffer, doc, &path);
+                            apply_body_to_buffer(
+                                &self.body_buffer,
+                                &self.suppress_body_signal,
+                                doc,
+                                &path,
+                            );
+                            self.body_dirty = false;
+                            self.selected = Some(path.clone());
+                            self.body_view.set_editable(true);
                             self.status = if view.soft_fail {
                                 format!(
-                                    "Node {path} (unparseable RTF — showing fallback)"
+                                    "Node {path} (unparseable RTF — edit replaces original bytes)"
                                 )
                             } else {
                                 format!("Node {path}")
                             };
                         }
                         Err(err) => {
-                            self.body_buffer.set_text("");
+                            self.set_body_text("");
+                            self.selected = None;
                             self.status = format!("Select failed: {err}");
                         }
                     }
+                    self.refresh_title(widgets);
                 }
                 Msg::ClearBody => {
-                    self.body_buffer.set_text("");
+                    if let Err(err) = self.commit_body_if_needed() {
+                        self.status = format!("Could not apply body edit: {err}");
+                        return;
+                    }
+                    self.selected = None;
+                    self.body_dirty = false;
+                    self.set_body_text("");
+                }
+                Msg::TitleEdited { path, title } => {
+                    let Some(doc) = self.doc.as_mut() else {
+                        return;
+                    };
+                    match doc.set_title(&path, title) {
+                        Ok(()) => {
+                            fill_tree(&self.tree_store, &doc.visible_tree());
+                            self.tree_view.expand_all();
+                            if let Some(sel) = &self.selected {
+                                select_path_in_tree(&self.tree_view, &self.tree_store, sel);
+                            }
+                            self.status = format!("Renamed {path}");
+                            self.refresh_title(widgets);
+                        }
+                        Err(err) => {
+                            self.status = format!("Rename failed: {err}");
+                        }
+                    }
+                }
+                Msg::BodyChanged => {
+                    self.body_dirty = true;
+                    self.refresh_title(widgets);
                 }
             }
+        }
+    }
+
+    impl AppModel {
+        fn set_body_text(&self, text: &str) {
+            self.suppress_body_signal.set(true);
+            self.body_buffer.set_text(text);
+            self.suppress_body_signal.set(false);
+        }
+
+        fn refresh_title(&self, widgets: &AppModelWidgets) {
+            let dirty = self
+                .doc
+                .as_ref()
+                .map(|d| d.is_dirty() || self.body_dirty)
+                .unwrap_or(false);
+            let path = self.doc.as_ref().and_then(|d| d.path());
+            let title = window_title_for_path(path, dirty);
+            widgets.main_window.set_title(Some(&title));
+        }
+
+        fn commit_body_if_needed(&mut self) -> std::result::Result<(), String> {
+            if !self.body_dirty {
+                return Ok(());
+            }
+            let Some(path) = self.selected.clone() else {
+                self.body_dirty = false;
+                return Ok(());
+            };
+            let Some(doc) = self.doc.as_mut() else {
+                self.body_dirty = false;
+                return Ok(());
+            };
+            let document = document_from_buffer(&self.body_buffer);
+            doc.set_body(&path, &document)
+                .map_err(|e| e.to_string())?;
+            self.body_dirty = false;
+            Ok(())
         }
     }
 
@@ -287,6 +448,38 @@ mod ui {
         append(store, None, rows);
     }
 
+    fn select_path_in_tree(
+        tree_view: &gtk::TreeView,
+        store: &gtk::TreeStore,
+        target: &NodePath,
+    ) {
+        let target_s = path_to_string(target);
+        if let Some(iter) = find_iter(store, None, &target_s) {
+            let path = store.path(&iter);
+            tree_view.selection().select_path(&path);
+        }
+    }
+
+    fn find_iter(
+        store: &gtk::TreeStore,
+        parent: Option<&gtk::TreeIter>,
+        target: &str,
+    ) -> Option<gtk::TreeIter> {
+        let n = store.iter_n_children(parent);
+        for i in 0..n {
+            if let Some(iter) = store.iter_nth_child(parent, i) {
+                let path_str: String = store.get(&iter, COL_PATH);
+                if path_str == target {
+                    return Some(iter);
+                }
+                if let Some(found) = find_iter(store, Some(&iter), target) {
+                    return Some(found);
+                }
+            }
+        }
+        None
+    }
+
     fn path_to_string(path: &NodePath) -> String {
         path.indices()
             .iter()
@@ -303,9 +496,16 @@ mod ui {
         NodePath::from_indices(indices)
     }
 
-    fn apply_body_to_buffer(buffer: &gtk::TextBuffer, doc: &EditorDoc, path: &NodePath) {
+    fn apply_body_to_buffer(
+        buffer: &gtk::TextBuffer,
+        suppress: &Rc<Cell<bool>>,
+        doc: &EditorDoc,
+        path: &NodePath,
+    ) {
+        suppress.set(true);
         buffer.set_text("");
         let Ok(node) = doc.guide().node(path) else {
+            suppress.set(false);
             return;
         };
         match load_rtf(node.rtf_body()) {
@@ -314,6 +514,7 @@ mod ui {
                 buffer.set_text(&plain_fallback);
             }
         }
+        suppress.set(false);
     }
 
     fn apply_document(buffer: &gtk::TextBuffer, document: &Document) {
@@ -322,17 +523,28 @@ mod ui {
             if i > 0 {
                 buffer.insert(&mut buffer.end_iter(), "\n");
             }
-            match block {
-                Block::Paragraph(runs) => insert_runs(buffer, runs),
+            let line_start = buffer.end_iter().offset();
+            let list_tag = match block {
+                Block::Paragraph(runs) => {
+                    insert_runs(buffer, runs);
+                    None
+                }
                 Block::BulletItem(runs) => {
                     buffer.insert(&mut buffer.end_iter(), "• ");
                     insert_runs(buffer, runs);
+                    Some("list-bullet")
                 }
                 Block::NumberedItem(runs) => {
                     buffer.insert(&mut buffer.end_iter(), &format!("{number}. "));
                     insert_runs(buffer, runs);
                     number += 1;
+                    Some("list-numbered")
                 }
+            };
+            if let Some(name) = list_tag {
+                let start = buffer.iter_at_offset(line_start);
+                let end = buffer.end_iter();
+                buffer.apply_tag_by_name(name, &start, &end);
             }
         }
     }
@@ -353,6 +565,157 @@ mod ui {
                 buffer.apply_tag_by_name("underline", &start, &end);
             }
         }
+    }
+
+    fn toggle_style_tag(buffer: &gtk::TextBuffer, name: &str) -> bool {
+        let Some((start, end)) = buffer.selection_bounds() else {
+            return false;
+        };
+        if start == end {
+            return false;
+        }
+        let Some(tag) = buffer.tag_table().lookup(name) else {
+            return false;
+        };
+        if start.has_tag(&tag) {
+            buffer.remove_tag(&tag, &start, &end);
+        } else {
+            buffer.apply_tag(&tag, &start, &end);
+        }
+        true
+    }
+
+    /// Convert the body TextBuffer back to a subset Document.
+    ///
+    /// List structure comes from `list-bullet` / `list-numbered` tags applied when
+    /// loading — not from guessing on `"1. "` / `"• "` text prefixes.
+    fn document_from_buffer(buffer: &gtk::TextBuffer) -> Document {
+        let start = buffer.start_iter();
+        let end = buffer.end_iter();
+        let text = buffer.text(&start, &end, true);
+        if text.is_empty() {
+            return Document::empty();
+        }
+
+        let bold = buffer.tag_table().lookup("bold");
+        let italic = buffer.tag_table().lookup("italic");
+        let underline = buffer.tag_table().lookup("underline");
+        let list_bullet = buffer.tag_table().lookup("list-bullet");
+        let list_numbered = buffer.tag_table().lookup("list-numbered");
+
+        let chars: Vec<char> = text.chars().collect();
+        let mut blocks = Vec::new();
+        let mut line_start = 0usize;
+        loop {
+            let line_end = chars[line_start..]
+                .iter()
+                .position(|&c| c == '\n')
+                .map(|p| line_start + p)
+                .unwrap_or(chars.len());
+            let line: String = chars[line_start..line_end].iter().collect();
+            let line_iter = buffer.iter_at_offset(line_start as i32);
+            let (kind, content_start) = classify_line(
+                &line,
+                &line_iter,
+                list_bullet.as_ref(),
+                list_numbered.as_ref(),
+            );
+            let content: String = line.chars().skip(content_start).collect();
+            let abs_content_start = line_start + content_start;
+            let runs = runs_for_range(
+                buffer,
+                abs_content_start,
+                &content,
+                bold.as_ref(),
+                italic.as_ref(),
+                underline.as_ref(),
+            );
+            match kind {
+                LineKind::Paragraph => blocks.push(Block::Paragraph(runs)),
+                LineKind::Bullet => blocks.push(Block::BulletItem(runs)),
+                LineKind::Numbered => blocks.push(Block::NumberedItem(runs)),
+            }
+            if line_end >= chars.len() {
+                break;
+            }
+            line_start = line_end + 1;
+        }
+        Document { blocks }
+    }
+
+    enum LineKind {
+        Paragraph,
+        Bullet,
+        Numbered,
+    }
+
+    /// Block kind from list tags; strip display prefixes only when tagged as a list.
+    fn classify_line(
+        line: &str,
+        line_iter: &gtk::TextIter,
+        list_bullet: Option<&gtk::TextTag>,
+        list_numbered: Option<&gtk::TextTag>,
+    ) -> (LineKind, usize) {
+        if list_bullet.is_some_and(|t| line_iter.has_tag(t)) {
+            let start = if line.starts_with("• ") { 2 } else { 0 };
+            return (LineKind::Bullet, start);
+        }
+        if list_numbered.is_some_and(|t| line_iter.has_tag(t)) {
+            let chars: Vec<char> = line.chars().collect();
+            let mut i = 0;
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+            let start = if i > 0 && i + 1 < chars.len() && chars[i] == '.' && chars[i + 1] == ' '
+            {
+                i + 2
+            } else {
+                0
+            };
+            return (LineKind::Numbered, start);
+        }
+        (LineKind::Paragraph, 0)
+    }
+
+    fn runs_for_range(
+        buffer: &gtk::TextBuffer,
+        start_off: usize,
+        content: &str,
+        bold: Option<&gtk::TextTag>,
+        italic: Option<&gtk::TextTag>,
+        underline: Option<&gtk::TextTag>,
+    ) -> Vec<Run> {
+        if content.is_empty() {
+            return Vec::new();
+        }
+        let chars: Vec<char> = content.chars().collect();
+        let style_at = |i: usize| -> SpanStyle {
+            let iter = buffer.iter_at_offset((start_off + i) as i32);
+            SpanStyle {
+                bold: bold.map(|t| iter.has_tag(t)).unwrap_or(false),
+                italic: italic.map(|t| iter.has_tag(t)).unwrap_or(false),
+                underline: underline.map(|t| iter.has_tag(t)).unwrap_or(false),
+            }
+        };
+        let mut runs = Vec::new();
+        let mut run_start = 0usize;
+        let mut cur_style = style_at(0);
+        for i in 1..chars.len() {
+            let st = style_at(i);
+            if st != cur_style {
+                runs.push(Run {
+                    text: chars[run_start..i].iter().collect(),
+                    style: cur_style,
+                });
+                run_start = i;
+                cur_style = st;
+            }
+        }
+        runs.push(Run {
+            text: chars[run_start..].iter().collect(),
+            style: cur_style,
+        });
+        runs
     }
 
     pub fn run(initial_path: Option<PathBuf>) {

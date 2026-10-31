@@ -38,6 +38,7 @@ A buildable product **spec** for **Editor v1**: a cross-platform desktop editor 
 - [Core-model mutation API](issues/13-core-model-mutation-api.md): `NodePath` + `new_empty` / set title·RTF / insert·remove·move; `InvalidPath`/`InvalidEdit`; Preserve-through private; Structural Round-trip after mutations
 - [`nextguide-rtf` library](issues/14-nextguide-rtf-library.md): toolkit-agnostic subset Document; `load`/`write`/`empty_rtf`/`bytes_for_save`; soft-fail Unparseable; no GTK types
 - [Open two-pane + save unchanged](issues/16-open-two-pane-save-unchanged.md): Dummy-hidden tree; body via `nextguide-rtf`→GTK tags; Open/Save; CLI path; Structural/untouched RTF on save unchanged
+- [Edit titles/bodies + dirty/save](issues/17-edit-title-body-dirty-save.md): `EditorDoc` set_title/set_body + dirty; subset rewrite only for edited bodies; Relm4 editable tree/body; Structural Round-trip after edits
 
 ## Not yet specified
 

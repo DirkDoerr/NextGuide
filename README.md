@@ -42,5 +42,5 @@ Needs a system GTK4 development install to build the UI (`ui` feature, on by def
 cargo run -p nextguide
 ```
 
-**Manual check (UI smoke deferred in CI):** `cargo run -p nextguide -- data/ImportSample.gde` — confirm a resizable two-pane window (Dummy root hidden; titles in the tree), select a Node to see its body, Save without edits, then quit. Bare `cargo run -p nextguide` opens Untitled.
+**Manual check (UI smoke deferred in CI):** `cargo run -p nextguide -- data/ImportSample.gde` — confirm a resizable two-pane window (Dummy root hidden; titles in the tree), select a Node, edit a title and body (Ctrl/Cmd+B/I/U; window title shows `*`), Save, reopen and confirm changes; sibling bodies you did not edit should keep exotic RTF. Bare `cargo run -p nextguide` opens Untitled.
 

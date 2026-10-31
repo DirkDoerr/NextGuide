@@ -1,9 +1,9 @@
-//! Opened Guide session helpers (Dummy-root-hidden tree + body view + save).
+//! Opened Guide session helpers (Dummy-root-hidden tree + body view + edit/save).
 
 use std::path::{Path, PathBuf};
 
 use nextguide_gde::{Guide, Node, NodePath, Result};
-use nextguide_rtf::{load as load_rtf, LoadBody};
+use nextguide_rtf::{bytes_for_save, load as load_rtf, Document, LoadBody};
 
 /// One visible tree row (Dummy root never appears).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -25,11 +25,12 @@ pub struct BodyView {
     pub soft_fail: bool,
 }
 
-/// An opened Guide plus its on-disk path (if any).
+/// An opened Guide plus its on-disk path (if any) and dirty state.
 #[derive(Clone, Debug)]
 pub struct EditorDoc {
     guide: Guide,
     path: Option<PathBuf>,
+    dirty: bool,
 }
 
 impl EditorDoc {
@@ -40,6 +41,7 @@ impl EditorDoc {
         Ok(Self {
             guide,
             path: Some(path.to_path_buf()),
+            dirty: false,
         })
     }
 
@@ -53,6 +55,11 @@ impl EditorDoc {
         self.path.as_deref()
     }
 
+    /// Whether the in-memory Guide has unsaved Core-model or body edits.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
     /// Visible tree: Dummy root’s children as top-level rows.
     pub fn visible_tree(&self) -> Vec<TreeRow> {
         visible_tree(&self.guide)
@@ -63,10 +70,47 @@ impl EditorDoc {
         body_view(&self.guide, path)
     }
 
-    /// Save the Guide to its path without rewriting any RTF bodies.
+    /// Rename the Node at `path` via the Core-model mutation API.
+    pub fn set_title(&mut self, path: &NodePath, title: impl Into<String>) -> Result<()> {
+        self.guide.set_title(path, title)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Replace the Node body with a subset rewrite from `doc`.
     ///
-    /// Untouched bodies keep their original opaque bytes; Structural Round-trip
-    /// honesty is preserved for an unmodified open→save cycle.
+    /// Only this Node’s RTF bytes change; siblings keep their original opaque
+    /// payloads. Soft-fail / exotic markup is intentionally replaced once the
+    /// caller supplies an edit Document.
+    pub fn set_body(&mut self, path: &NodePath, doc: &Document) -> Result<()> {
+        let original = self.guide.node(path)?.rtf_body().to_vec();
+        let bytes = bytes_for_save(&original, Some(doc));
+        self.guide.set_rtf_body(path, bytes)?;
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Persist the Guide to its opened path and clear dirty.
+    pub fn save(&mut self) -> Result<()> {
+        let path = self.path.clone().ok_or_else(|| {
+            nextguide_gde::Error::InvalidEdit("save requires an opened path".into())
+        })?;
+        self.save_to(path)
+    }
+
+    /// Persist the Guide to `path` and clear dirty.
+    ///
+    /// Untouched bodies keep original opaque bytes; bodies updated via
+    /// [`set_body`] are already subset-rewritten on the Guide.
+    pub fn save_to(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        nextguide_gde::save_path(&self.guide, path)?;
+        self.dirty = false;
+        Ok(())
+    }
+
+    /// Save without requiring `&mut` when the Guide is known clean (open→save).
+    ///
+    /// Prefer [`save`] / [`save_to`] after edits so dirty state clears.
     pub fn save_unchanged(&self) -> Result<()> {
         let path = self.path.as_ref().ok_or_else(|| {
             nextguide_gde::Error::InvalidEdit("save unchanged requires an opened path".into())
@@ -74,7 +118,7 @@ impl EditorDoc {
         nextguide_gde::save_path(&self.guide, path)
     }
 
-    /// Save to an explicit path without rewriting RTF bodies (used by tests / Save As later).
+    /// Save to an explicit path without clearing dirty (tests / Save As staging).
     pub fn save_unchanged_to(&self, path: impl AsRef<Path>) -> Result<()> {
         nextguide_gde::save_path(&self.guide, path)
     }
@@ -125,7 +169,7 @@ pub fn body_view_from_rtf(rtf: &[u8]) -> BodyView {
     }
 }
 
-fn document_to_display_text(doc: &nextguide_rtf::Document) -> String {
+fn document_to_display_text(doc: &Document) -> String {
     let mut out = String::new();
     let mut number = 1u32;
     for (i, block) in doc.blocks.iter().enumerate() {

@@ -20,10 +20,17 @@ pub fn untitled_window_title() -> &'static str {
 }
 
 /// Window title for the current document path (`None` = untitled).
-pub fn window_title_for_path(path: Option<&Path>) -> String {
-    match path.and_then(|p| p.file_name()) {
+///
+/// When `dirty` is true, appends ` *` so the unsaved indicator is visible.
+pub fn window_title_for_path(path: Option<&Path>, dirty: bool) -> String {
+    let base = match path.and_then(|p| p.file_name()) {
         Some(name) if !name.is_empty() => name.to_string_lossy().into_owned(),
         _ => untitled_window_title().to_string(),
+    };
+    if dirty {
+        format!("{base} *")
+    } else {
+        base
     }
 }
 
