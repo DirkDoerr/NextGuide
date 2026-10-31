@@ -76,6 +76,16 @@ mod ui {
         FocusPane(FocusPane),
         Undo,
         Redo,
+        /// Toggle bold on the body selection.
+        ToggleBold,
+        /// Toggle italic on the body selection.
+        ToggleItalic,
+        /// Toggle underline on the body selection.
+        ToggleUnderline,
+        /// Toggle bullet list on the selected body lines.
+        ToggleBulletList,
+        /// Toggle numbered list on the selected body lines.
+        ToggleNumberedList,
         /// Insert a child under the selection (or Dummy root when none).
         InsertChild,
         /// Insert a sibling after the selection (requires a selection).
@@ -108,37 +118,69 @@ mod ui {
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
 
+                    // File / Edit / Format / Tree menus (spec menubar intent).
                     gtk::HeaderBar {
-                        pack_start = &gtk::Button {
-                            set_label: "New",
-                            connect_clicked => Msg::New,
-                        },
-                        pack_start = &gtk::Button {
-                            set_label: "Open",
-                            connect_clicked => Msg::OpenDialog,
-                        },
-                        pack_start = &gtk::Button {
-                            set_label: "Save",
-                            connect_clicked => Msg::Save,
-                        },
-                        pack_start = &gtk::Button {
-                            set_label: "Save As",
-                            connect_clicked => Msg::SaveAsDialog,
-                        },
                         pack_start = &gtk::MenuButton {
-                            set_label: "Recent",
+                            set_label: "File",
+                            set_always_show_arrow: false,
                             #[wrap(Some)]
                             set_popover = &gtk::Popover {
-                                #[name = "recent_menu"]
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Vertical,
                                     set_spacing: 2,
                                     set_margin_all: 6,
+
+                                    gtk::Button {
+                                        set_label: "New",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::New,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Open…",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::OpenDialog,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Save",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::Save,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Save As…",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::SaveAsDialog,
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
+                                    gtk::MenuButton {
+                                        set_label: "Recent",
+                                        set_has_frame: false,
+                                        set_halign: gtk::Align::Start,
+                                        #[wrap(Some)]
+                                        set_popover = &gtk::Popover {
+                                            #[name = "recent_menu"]
+                                            gtk::Box {
+                                                set_orientation: gtk::Orientation::Vertical,
+                                                set_spacing: 2,
+                                                set_margin_all: 6,
+                                            },
+                                        },
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Quit",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::RequestQuit,
+                                    },
                                 },
                             },
                         },
                         pack_start = &gtk::MenuButton {
                             set_label: "Edit",
+                            set_always_show_arrow: false,
                             #[wrap(Some)]
                             set_popover = &gtk::Popover {
                                 gtk::Box {
@@ -160,7 +202,49 @@ mod ui {
                             },
                         },
                         pack_start = &gtk::MenuButton {
+                            set_label: "Format",
+                            set_always_show_arrow: false,
+                            #[wrap(Some)]
+                            set_popover = &gtk::Popover {
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 2,
+                                    set_margin_all: 6,
+
+                                    gtk::Button {
+                                        set_label: "Bold",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::ToggleBold,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Italic",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::ToggleItalic,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Underline",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::ToggleUnderline,
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Bullet List",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::ToggleBulletList,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Numbered List",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::ToggleNumberedList,
+                                    },
+                                },
+                            },
+                        },
+                        pack_start = &gtk::MenuButton {
                             set_label: "Tree",
+                            set_always_show_arrow: false,
                             #[wrap(Some)]
                             set_popover = &gtk::Popover {
                                 gtk::Box {
@@ -369,9 +453,8 @@ mod ui {
             let body_view = widgets.body_view.clone();
             let recent_menu = widgets.recent_menu.clone();
 
-            // Ctrl/Cmd+B/I/U toggle pragmatic subset styles on the selection.
+            // Body-local format shortcuts: B/I/U and list toggles.
             let key = gtk::EventControllerKey::new();
-            let buf_for_keys = body_buffer;
             let key_sender = sender.clone();
             key.connect_key_pressed(move |_, keyval, _keycode, mods| {
                 let shortcut = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK)
@@ -379,16 +462,31 @@ mod ui {
                 if !shortcut {
                     return glib::Propagation::Proceed;
                 }
-                let tag = match keyval {
-                    gtk::gdk::Key::b | gtk::gdk::Key::B => "bold",
-                    gtk::gdk::Key::i | gtk::gdk::Key::I => "italic",
-                    gtk::gdk::Key::u | gtk::gdk::Key::U => "underline",
-                    _ => return glib::Propagation::Proceed,
-                };
-                if toggle_style_tag(&buf_for_keys, tag) {
-                    key_sender.input(Msg::BodyChanged);
+                let shift = mods.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                match keyval {
+                    gtk::gdk::Key::b | gtk::gdk::Key::B if !shift => {
+                        key_sender.input(Msg::ToggleBold);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::i | gtk::gdk::Key::I if !shift => {
+                        key_sender.input(Msg::ToggleItalic);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::u | gtk::gdk::Key::U if !shift => {
+                        key_sender.input(Msg::ToggleUnderline);
+                        glib::Propagation::Stop
+                    }
+                    // Ctrl/Cmd+Shift+8 → bullet; Ctrl/Cmd+Shift+7 → numbered (common desktop habit).
+                    gtk::gdk::Key::_8 | gtk::gdk::Key::KP_8 if shift => {
+                        key_sender.input(Msg::ToggleBulletList);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::_7 | gtk::gdk::Key::KP_7 if shift => {
+                        key_sender.input(Msg::ToggleNumberedList);
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
                 }
-                glib::Propagation::Stop
             });
             body_view.add_controller(key);
 
@@ -399,10 +497,10 @@ mod ui {
             });
             body_view.add_controller(body_focus);
 
-            // Window-level Undo/Redo shortcuts (stack follows focus_pane).
-            let undo_keys = gtk::EventControllerKey::new();
-            let undo_sender = sender.clone();
-            undo_keys.connect_key_pressed(move |_, keyval, _keycode, mods| {
+            // Window-level File + Undo/Redo shortcuts (Edit stack follows focus_pane).
+            let app_keys = gtk::EventControllerKey::new();
+            let app_sender = sender.clone();
+            app_keys.connect_key_pressed(move |_, keyval, _keycode, mods| {
                 let primary = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK)
                     || mods.contains(gtk::gdk::ModifierType::META_MASK);
                 if !primary {
@@ -410,22 +508,38 @@ mod ui {
                 }
                 let shift = mods.contains(gtk::gdk::ModifierType::SHIFT_MASK);
                 match keyval {
+                    gtk::gdk::Key::n | gtk::gdk::Key::N if !shift => {
+                        app_sender.input(Msg::New);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::o | gtk::gdk::Key::O if !shift => {
+                        app_sender.input(Msg::OpenDialog);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::s | gtk::gdk::Key::S if shift => {
+                        app_sender.input(Msg::SaveAsDialog);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::s | gtk::gdk::Key::S => {
+                        app_sender.input(Msg::Save);
+                        glib::Propagation::Stop
+                    }
                     gtk::gdk::Key::z | gtk::gdk::Key::Z if shift => {
-                        undo_sender.input(Msg::Redo);
+                        app_sender.input(Msg::Redo);
                         glib::Propagation::Stop
                     }
                     gtk::gdk::Key::z | gtk::gdk::Key::Z => {
-                        undo_sender.input(Msg::Undo);
+                        app_sender.input(Msg::Undo);
                         glib::Propagation::Stop
                     }
                     gtk::gdk::Key::y | gtk::gdk::Key::Y if !shift => {
-                        undo_sender.input(Msg::Redo);
+                        app_sender.input(Msg::Redo);
                         glib::Propagation::Stop
                     }
                     _ => glib::Propagation::Proceed,
                 }
             });
-            root.add_controller(undo_keys);
+            root.add_controller(app_keys);
 
             let quit_sender = sender.clone();
             root.connect_close_request(move |_| {
@@ -683,6 +797,21 @@ mod ui {
                 }
                 Msg::Redo => {
                     self.run_redo(widgets);
+                }
+                Msg::ToggleBold => {
+                    self.toggle_body_style(widgets, "bold");
+                }
+                Msg::ToggleItalic => {
+                    self.toggle_body_style(widgets, "italic");
+                }
+                Msg::ToggleUnderline => {
+                    self.toggle_body_style(widgets, "underline");
+                }
+                Msg::ToggleBulletList => {
+                    self.toggle_body_list(widgets, LineKind::Bullet);
+                }
+                Msg::ToggleNumberedList => {
+                    self.toggle_body_list(widgets, LineKind::Numbered);
                 }
                 Msg::InsertChild => {
                     if let Err(err) = self.commit_body_if_needed() {
@@ -956,6 +1085,34 @@ mod ui {
         fn set_body_editable(&self, editable: bool) {
             self.body_view.set_editable(editable);
             self.body_view.set_cursor_visible(editable);
+        }
+
+        fn toggle_body_style(&mut self, widgets: &AppModelWidgets, tag: &str) {
+            if !self.body_view.is_editable() {
+                self.status = "Select a Node to format its body.".into();
+                return;
+            }
+            if toggle_style_tag(&self.body_buffer, tag) {
+                self.body_dirty = true;
+                self.status = format!("Toggled {tag}");
+                self.refresh_title(widgets);
+            }
+        }
+
+        fn toggle_body_list(&mut self, widgets: &AppModelWidgets, kind: LineKind) {
+            if !self.body_view.is_editable() {
+                self.status = "Select a Node to format its body.".into();
+                return;
+            }
+            if toggle_list_kind(&self.body_buffer, kind) {
+                self.body_dirty = true;
+                self.status = match kind {
+                    LineKind::Bullet => "Toggled bullet list".into(),
+                    LineKind::Numbered => "Toggled numbered list".into(),
+                    LineKind::Paragraph => "Cleared list".into(),
+                };
+                self.refresh_title(widgets);
+            }
         }
 
         fn session_dirty(&self) -> bool {
@@ -1442,6 +1599,215 @@ mod ui {
         true
     }
 
+    /// Toggle bullet/numbered list tags (+ display prefixes) on selected lines.
+    ///
+    /// List structure is owned by `list-bullet` / `list-numbered` tags so
+    /// [`document_from_buffer`] round-trips through the `nextguide-rtf` model.
+    fn toggle_list_kind(buffer: &gtk::TextBuffer, want: LineKind) -> bool {
+        let (sel_start, sel_end) = match buffer.selection_bounds() {
+            Some(bounds) => bounds,
+            None => {
+                let insert = buffer.iter_at_mark(&buffer.get_insert());
+                (insert.clone(), insert)
+            }
+        };
+
+        let start_line = sel_start.line();
+        let mut end_line = sel_end.line();
+        if sel_end.line_offset() == 0 && sel_end.offset() > sel_start.offset() && end_line > start_line
+        {
+            end_line -= 1;
+        }
+
+        let list_bullet = buffer.tag_table().lookup("list-bullet");
+        let list_numbered = buffer.tag_table().lookup("list-numbered");
+
+        let mut all_want = true;
+        for line in start_line..=end_line {
+            let Some(iter) = buffer.iter_at_line(line) else {
+                continue;
+            };
+            let kind = line_kind_from_tags(&iter, list_bullet.as_ref(), list_numbered.as_ref());
+            if kind != want {
+                all_want = false;
+                break;
+            }
+        }
+
+        let target = if all_want {
+            LineKind::Paragraph
+        } else {
+            want
+        };
+
+        buffer.begin_user_action();
+        // Bottom-up so prefix insert/delete does not shift later line indexes mid-pass.
+        for line in (start_line..=end_line).rev() {
+            set_line_list_kind(
+                buffer,
+                line,
+                target,
+                list_bullet.as_ref(),
+                list_numbered.as_ref(),
+            );
+        }
+        if matches!(target, LineKind::Numbered) {
+            renumber_numbered_lines(buffer, list_numbered.as_ref());
+        }
+        buffer.end_user_action();
+        true
+    }
+
+    fn line_kind_from_tags(
+        line_iter: &gtk::TextIter,
+        list_bullet: Option<&gtk::TextTag>,
+        list_numbered: Option<&gtk::TextTag>,
+    ) -> LineKind {
+        if list_bullet.is_some_and(|t| line_iter.has_tag(t)) {
+            LineKind::Bullet
+        } else if list_numbered.is_some_and(|t| line_iter.has_tag(t)) {
+            LineKind::Numbered
+        } else {
+            LineKind::Paragraph
+        }
+    }
+
+    fn set_line_list_kind(
+        buffer: &gtk::TextBuffer,
+        line: i32,
+        target: LineKind,
+        list_bullet: Option<&gtk::TextTag>,
+        list_numbered: Option<&gtk::TextTag>,
+    ) {
+        let Some(mut line_start) = buffer.iter_at_line(line) else {
+            return;
+        };
+        let mut line_end = line_start.clone();
+        if !line_end.ends_line() {
+            line_end.forward_to_line_end();
+        }
+
+        let current = line_kind_from_tags(&line_start, list_bullet, list_numbered);
+        let line_text = buffer.text(&line_start, &line_end, true);
+        let prefix_chars = list_prefix_chars(&line_text, current);
+
+        if let Some(tag) = list_bullet {
+            buffer.remove_tag(tag, &line_start, &line_end);
+        }
+        if let Some(tag) = list_numbered {
+            buffer.remove_tag(tag, &line_start, &line_end);
+        }
+
+        if prefix_chars > 0 {
+            let mut del_end = line_start.clone();
+            del_end.forward_chars(prefix_chars as i32);
+            buffer.delete(&mut line_start, &mut del_end);
+            // `line_start` / `line_end` are invalidated; re-resolve.
+            let Some(fresh_start) = buffer.iter_at_line(line) else {
+                return;
+            };
+            line_start = fresh_start;
+            line_end = line_start.clone();
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+        }
+
+        let insert_prefix = match target {
+            LineKind::Paragraph => None,
+            LineKind::Bullet => Some("• ".to_string()),
+            LineKind::Numbered => Some("1. ".to_string()),
+        };
+        if let Some(prefix) = insert_prefix {
+            buffer.insert(&mut line_start, &prefix);
+            let Some(fresh_start) = buffer.iter_at_line(line) else {
+                return;
+            };
+            line_start = fresh_start;
+            line_end = line_start.clone();
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+        }
+
+        let tag_name = match target {
+            LineKind::Paragraph => None,
+            LineKind::Bullet => Some("list-bullet"),
+            LineKind::Numbered => Some("list-numbered"),
+        };
+        if let Some(name) = tag_name {
+            buffer.apply_tag_by_name(name, &line_start, &line_end);
+        }
+    }
+
+    fn list_prefix_chars(line: &str, kind: LineKind) -> usize {
+        match kind {
+            LineKind::Paragraph => 0,
+            LineKind::Bullet => {
+                if line.starts_with("• ") {
+                    2
+                } else {
+                    0
+                }
+            }
+            LineKind::Numbered => {
+                let chars: Vec<char> = line.chars().collect();
+                let mut i = 0;
+                while i < chars.len() && chars[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i > 0 && i + 1 < chars.len() && chars[i] == '.' && chars[i + 1] == ' ' {
+                    i + 2
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    /// Refresh display prefixes for consecutive numbered-tagged lines.
+    fn renumber_numbered_lines(buffer: &gtk::TextBuffer, list_numbered: Option<&gtk::TextTag>) {
+        let Some(list_numbered) = list_numbered else {
+            return;
+        };
+        let line_count = buffer.line_count();
+        let mut number = 1u32;
+        for line in 0..line_count {
+            let Some(mut line_start) = buffer.iter_at_line(line) else {
+                continue;
+            };
+            if !line_start.has_tag(list_numbered) {
+                number = 1;
+                continue;
+            }
+            let mut line_end = line_start.clone();
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            let line_text = buffer.text(&line_start, &line_end, true);
+            let old_prefix = list_prefix_chars(&line_text, LineKind::Numbered);
+            let new_prefix = format!("{number}. ");
+            number += 1;
+            if old_prefix > 0 {
+                let mut del_end = line_start.clone();
+                del_end.forward_chars(old_prefix as i32);
+                buffer.delete(&mut line_start, &mut del_end);
+            }
+            let Some(mut fresh_start) = buffer.iter_at_line(line) else {
+                continue;
+            };
+            buffer.insert(&mut fresh_start, &new_prefix);
+            let Some(tag_start) = buffer.iter_at_line(line) else {
+                continue;
+            };
+            let mut tag_end = tag_start.clone();
+            if !tag_end.ends_line() {
+                tag_end.forward_to_line_end();
+            }
+            buffer.apply_tag(list_numbered, &tag_start, &tag_end);
+        }
+    }
+
     /// Convert the body TextBuffer back to a subset Document.
     ///
     /// List structure comes from `list-bullet` / `list-numbered` tags applied when
@@ -1500,6 +1866,7 @@ mod ui {
         Document { blocks }
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum LineKind {
         Paragraph,
         Bullet,
