@@ -16,6 +16,8 @@ It is also an exercise in building with AI.
 
 Format v1 is a greenfield library and CLI for The Guide **v2** `.gde` Core model (tree, titles, opaque RTF bodies). No editor UI.
 
+Requires a stable Rust toolchain (`rust-toolchain.toml`; install via rustup or Homebrew `rust`).
+
 - Library: `nextguide-gde` (`crates/nextguide-gde`)
 - CLI: `nextguide` (`crates/nextguide`) — `dump` and `check` (`--byte-stable` for owned goldens)
 - Fixtures: `data/`
