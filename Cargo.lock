@@ -522,6 +522,7 @@ name = "nextguide"
 version = "0.1.0"
 dependencies = [
  "nextguide-gde",
+ "nextguide-rtf",
  "relm4",
 ]
 

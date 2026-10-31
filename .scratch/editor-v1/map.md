@@ -37,6 +37,7 @@ A buildable product **spec** for **Editor v1**: a cross-platform desktop editor 
 - [Scaffold `nextguide` GTK app](issues/15-scaffold-nextguide-gtk-app.md): Relm4/GTK4 binary `nextguide` + `nextguide-gde` link; UI smoke deferred (manual); headless helper tests via `--no-default-features`
 - [Core-model mutation API](issues/13-core-model-mutation-api.md): `NodePath` + `new_empty` / set title·RTF / insert·remove·move; `InvalidPath`/`InvalidEdit`; Preserve-through private; Structural Round-trip after mutations
 - [`nextguide-rtf` library](issues/14-nextguide-rtf-library.md): toolkit-agnostic subset Document; `load`/`write`/`empty_rtf`/`bytes_for_save`; soft-fail Unparseable; no GTK types
+- [Open two-pane + save unchanged](issues/16-open-two-pane-save-unchanged.md): Dummy-hidden tree; body via `nextguide-rtf`→GTK tags; Open/Save; CLI path; Structural/untouched RTF on save unchanged
 
 ## Not yet specified
 

@@ -13,6 +13,7 @@ ui = ["dep:relm4"]
 
 [dependencies]
 nextguide-gde = { path = "../nextguide-gde" }
+nextguide-rtf = { path = "../nextguide-rtf" }
 relm4 = { version = "0.9.1", optional = true }
 
 [[bin]]

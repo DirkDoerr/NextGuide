@@ -1,11 +1,15 @@
 //! Editor v1 application helpers shared by the Relm4 shell.
 //!
 //! Widget code lives in the binary; this library stays free of GTK types so
-//! CI can exercise the in-process `nextguide-gde` link without a display.
+//! CI can exercise the in-process `nextguide-gde` / `nextguide-rtf` link without a display.
+
+mod session;
 
 use std::path::Path;
 
 use nextguide_gde::{Guide, Result};
+
+pub use session::{body_view, body_view_from_rtf, visible_tree, BodyView, EditorDoc, TreeRow};
 
 /// GApplication / Relm4 application id.
 pub const APP_ID: &str = "org.nextguide.NextGuide";
