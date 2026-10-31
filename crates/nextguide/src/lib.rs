@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use nextguide_gde::{Guide, Result};
 
 pub use recent::{RecentFiles, RECENT_LIMIT};
-pub use session::{body_view, body_view_from_rtf, visible_tree, BodyView, EditorDoc, TreeRow};
+pub use session::{
+    body_view, body_view_from_rtf, visible_tree, BodyView, EditorDoc, TreeRow, TREE_UNDO_LIMIT,
+    UNDO_DEPTH_LIMIT,
+};
 
 /// GApplication / Relm4 application id.
 pub const APP_ID: &str = "org.nextguide.NextGuide";

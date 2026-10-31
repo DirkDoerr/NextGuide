@@ -10,7 +10,7 @@ mod ui {
     use nextguide_rtf::{load as load_rtf, Block, Document, LoadBody, Run, SpanStyle};
     use nextguide::{
         default_recent_store_path, needs_dirty_prompt, window_title_for_path, DirtyPromptChoice,
-        EditorDoc, RecentFiles, TreeRow, APP_ID,
+        EditorDoc, RecentFiles, TreeRow, APP_ID, UNDO_DEPTH_LIMIT,
     };
     use relm4::gtk;
     use relm4::gtk::glib;
@@ -29,6 +29,13 @@ mod ui {
         Quit,
     }
 
+    /// Which undo stack Edit → Undo/Redo and shortcuts target.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum FocusPane {
+        Tree,
+        Body,
+    }
+
     struct AppModel {
         doc: Option<EditorDoc>,
         selected: Option<NodePath>,
@@ -41,6 +48,8 @@ mod ui {
         suppress_body_signal: Rc<Cell<bool>>,
         /// True when the body pane text differs from the last committed Node body.
         body_dirty: bool,
+        /// Active undo stack follows focus (body GTK buffer vs tree/title app stack).
+        focus_pane: FocusPane,
         recent: RecentFiles,
         recent_store: PathBuf,
         pending: Option<PendingAction>,
@@ -64,6 +73,9 @@ mod ui {
         ClearBody,
         TitleEdited { path: NodePath, title: String },
         BodyChanged,
+        FocusPane(FocusPane),
+        Undo,
+        Redo,
         /// Insert a child under the selection (or Dummy root when none).
         InsertChild,
         /// Insert a sibling after the selection (requires a selection).
@@ -122,6 +134,28 @@ mod ui {
                                     set_orientation: gtk::Orientation::Vertical,
                                     set_spacing: 2,
                                     set_margin_all: 6,
+                                },
+                            },
+                        },
+                        pack_start = &gtk::MenuButton {
+                            set_label: "Edit",
+                            #[wrap(Some)]
+                            set_popover = &gtk::Popover {
+                                gtk::Box {
+                                    set_orientation: gtk::Orientation::Vertical,
+                                    set_spacing: 2,
+                                    set_margin_all: 6,
+
+                                    gtk::Button {
+                                        set_label: "Undo",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::Undo,
+                                    },
+                                    gtk::Button {
+                                        set_label: "Redo",
+                                        set_has_frame: false,
+                                        connect_clicked => Msg::Redo,
+                                    },
                                 },
                             },
                         },
@@ -288,7 +322,9 @@ mod ui {
             tag_table.add(&list_numbered);
             let body_buffer = gtk::TextBuffer::builder()
                 .tag_table(&tag_table)
+                .enable_undo(true)
                 .build();
+            body_buffer.set_max_undo_levels(UNDO_DEPTH_LIMIT as u32);
 
             let suppress_body_signal = Rc::new(Cell::new(false));
             let body_sender = sender.clone();
@@ -303,6 +339,14 @@ mod ui {
             let recent_store = default_recent_store_path();
             let recent = RecentFiles::load_from(&recent_store).unwrap_or_default();
 
+            let tree_focus = gtk::EventControllerFocus::new();
+            let focus_sender = sender.clone();
+            tree_focus.connect_enter(move |_| {
+                focus_sender.input(Msg::FocusPane(FocusPane::Tree));
+            });
+            tree_view.add_controller(tree_focus);
+            tree_view.set_can_focus(true);
+
             let model = AppModel {
                 doc: Some(EditorDoc::new()),
                 selected: None,
@@ -313,6 +357,7 @@ mod ui {
                 body_view: gtk::TextView::new(),
                 suppress_body_signal,
                 body_dirty: false,
+                focus_pane: FocusPane::Tree,
                 recent,
                 recent_store,
                 pending: None,
@@ -346,6 +391,41 @@ mod ui {
                 glib::Propagation::Stop
             });
             body_view.add_controller(key);
+
+            let body_focus = gtk::EventControllerFocus::new();
+            let body_focus_sender = sender.clone();
+            body_focus.connect_enter(move |_| {
+                body_focus_sender.input(Msg::FocusPane(FocusPane::Body));
+            });
+            body_view.add_controller(body_focus);
+
+            // Window-level Undo/Redo shortcuts (stack follows focus_pane).
+            let undo_keys = gtk::EventControllerKey::new();
+            let undo_sender = sender.clone();
+            undo_keys.connect_key_pressed(move |_, keyval, _keycode, mods| {
+                let primary = mods.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                    || mods.contains(gtk::gdk::ModifierType::META_MASK);
+                if !primary {
+                    return glib::Propagation::Proceed;
+                }
+                let shift = mods.contains(gtk::gdk::ModifierType::SHIFT_MASK);
+                match keyval {
+                    gtk::gdk::Key::z | gtk::gdk::Key::Z if shift => {
+                        undo_sender.input(Msg::Redo);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::z | gtk::gdk::Key::Z => {
+                        undo_sender.input(Msg::Undo);
+                        glib::Propagation::Stop
+                    }
+                    gtk::gdk::Key::y | gtk::gdk::Key::Y if !shift => {
+                        undo_sender.input(Msg::Redo);
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
+                }
+            });
+            root.add_controller(undo_keys);
 
             let quit_sender = sender.clone();
             root.connect_close_request(move |_| {
@@ -572,6 +652,7 @@ mod ui {
                     self.set_body_editable(false);
                 }
                 Msg::TitleEdited { path, title } => {
+                    self.focus_pane = FocusPane::Tree;
                     let Some(doc) = self.doc.as_mut() else {
                         return;
                     };
@@ -593,6 +674,15 @@ mod ui {
                 Msg::BodyChanged => {
                     self.body_dirty = true;
                     self.refresh_title(widgets);
+                }
+                Msg::FocusPane(pane) => {
+                    self.focus_pane = pane;
+                }
+                Msg::Undo => {
+                    self.run_undo(widgets);
+                }
+                Msg::Redo => {
+                    self.run_redo(widgets);
                 }
                 Msg::InsertChild => {
                     if let Err(err) = self.commit_body_if_needed() {
@@ -777,8 +867,90 @@ mod ui {
     impl AppModel {
         fn set_body_text(&self, text: &str) {
             self.suppress_body_signal.set(true);
+            // Irreversible fill seals/clears the body undo stack (selection change).
+            self.body_buffer.begin_irreversible_action();
             self.body_buffer.set_text(text);
+            self.body_buffer.end_irreversible_action();
             self.suppress_body_signal.set(false);
+        }
+
+        fn run_undo(&mut self, widgets: &AppModelWidgets) {
+            match self.focus_pane {
+                FocusPane::Body => {
+                    if self.body_buffer.can_undo() {
+                        self.body_buffer.undo();
+                        self.status = "Body undo".into();
+                        self.refresh_title(widgets);
+                    } else {
+                        self.status = "Nothing to undo in the body".into();
+                    }
+                }
+                FocusPane::Tree => {
+                    // Discard uncommitted body buffer edits so refresh cannot
+                    // re-apply them onto the restored Guide checkpoint.
+                    self.body_dirty = false;
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Nothing to undo".into();
+                        return;
+                    };
+                    if !doc.undo_tree() {
+                        self.status = "Nothing to undo in the tree".into();
+                        return;
+                    }
+                    self.after_tree_history(widgets, "Tree undo");
+                }
+            }
+        }
+
+        fn run_redo(&mut self, widgets: &AppModelWidgets) {
+            match self.focus_pane {
+                FocusPane::Body => {
+                    if self.body_buffer.can_redo() {
+                        self.body_buffer.redo();
+                        self.status = "Body redo".into();
+                        self.refresh_title(widgets);
+                    } else {
+                        self.status = "Nothing to redo in the body".into();
+                    }
+                }
+                FocusPane::Tree => {
+                    self.body_dirty = false;
+                    let Some(doc) = self.doc.as_mut() else {
+                        self.status = "Nothing to redo".into();
+                        return;
+                    };
+                    if !doc.redo_tree() {
+                        self.status = "Nothing to redo in the tree".into();
+                        return;
+                    }
+                    self.after_tree_history(widgets, "Tree redo");
+                }
+            }
+        }
+
+        /// Refresh UI after an app-level tree/title undo or redo.
+        fn after_tree_history(&mut self, widgets: &AppModelWidgets, status: &str) {
+            let selected = self.selected.clone();
+            let Some(doc) = self.doc.as_ref() else {
+                return;
+            };
+            fill_tree(&self.tree_store, &doc.visible_tree());
+            self.tree_view.expand_all();
+            if let Some(path) = selected {
+                if doc.guide().node(&path).is_ok() {
+                    // Avoid selection-changed commit: body_dirty already cleared.
+                    self.selected = None;
+                    select_path_in_tree(&self.tree_view, &self.tree_store, &path);
+                } else {
+                    self.selected = None;
+                    self.body_dirty = false;
+                    self.set_body_text("");
+                    self.set_body_editable(false);
+                    self.tree_view.selection().unselect_all();
+                }
+            }
+            self.status = status.into();
+            self.refresh_title(widgets);
         }
 
         fn set_body_editable(&self, editable: bool) {
@@ -1047,6 +1219,7 @@ mod ui {
             select: Option<NodePath>,
             status: &str,
         ) {
+            self.focus_pane = FocusPane::Tree;
             let Some(doc) = self.doc.as_ref() else {
                 return;
             };
@@ -1183,8 +1356,11 @@ mod ui {
         path: &NodePath,
     ) {
         suppress.set(true);
+        // Changing Node selection seals the previous body's GTK undo stack.
+        buffer.begin_irreversible_action();
         buffer.set_text("");
         let Ok(node) = doc.guide().node(path) else {
+            buffer.end_irreversible_action();
             suppress.set(false);
             return;
         };
@@ -1194,6 +1370,7 @@ mod ui {
                 buffer.set_text(&plain_fallback);
             }
         }
+        buffer.end_irreversible_action();
         suppress.set(false);
     }
 

@@ -5,6 +5,12 @@ use std::path::{Path, PathBuf};
 use nextguide_gde::{Guide, Node, NodePath, Result};
 use nextguide_rtf::{bytes_for_save, empty_rtf, load as load_rtf, Document, LoadBody};
 
+/// Modest depth cap (~50) for each Editor v1 undo stack (tree/title and body).
+pub const UNDO_DEPTH_LIMIT: usize = 50;
+
+/// Alias kept for call sites / tests that name the tree stack explicitly.
+pub const TREE_UNDO_LIMIT: usize = UNDO_DEPTH_LIMIT;
+
 /// One visible tree row (Dummy root never appears).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TreeRow {
@@ -25,12 +31,67 @@ pub struct BodyView {
     pub soft_fail: bool,
 }
 
+/// Snapshot of Guide + dirty used by the tree/title undo stack.
+#[derive(Clone, Debug)]
+struct TreeCheckpoint {
+    guide: Guide,
+    dirty: bool,
+}
+
+#[derive(Clone, Debug, Default)]
+struct TreeHistory {
+    undo: Vec<TreeCheckpoint>,
+    redo: Vec<TreeCheckpoint>,
+}
+
+impl TreeHistory {
+    fn push(&mut self, checkpoint: TreeCheckpoint) {
+        if self.undo.len() >= UNDO_DEPTH_LIMIT {
+            self.undo.remove(0);
+        }
+        self.undo.push(checkpoint);
+        self.redo.clear();
+    }
+
+    /// Drop the most recent undo entry (failed mutation after a speculative push).
+    fn discard_last_push(&mut self) {
+        let _ = self.undo.pop();
+    }
+
+    fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    fn undo(&mut self, current: TreeCheckpoint) -> Option<TreeCheckpoint> {
+        let previous = self.undo.pop()?;
+        if self.redo.len() >= UNDO_DEPTH_LIMIT {
+            self.redo.remove(0);
+        }
+        self.redo.push(current);
+        Some(previous)
+    }
+
+    fn redo(&mut self, current: TreeCheckpoint) -> Option<TreeCheckpoint> {
+        let next = self.redo.pop()?;
+        if self.undo.len() >= UNDO_DEPTH_LIMIT {
+            self.undo.remove(0);
+        }
+        self.undo.push(current);
+        Some(next)
+    }
+}
+
 /// An opened Guide plus its on-disk path (if any) and dirty state.
 #[derive(Clone, Debug)]
 pub struct EditorDoc {
     guide: Guide,
     path: Option<PathBuf>,
     dirty: bool,
+    tree_history: TreeHistory,
 }
 
 impl EditorDoc {
@@ -40,6 +101,7 @@ impl EditorDoc {
             guide: Guide::new_empty(),
             path: None,
             dirty: false,
+            tree_history: TreeHistory::default(),
         }
     }
 
@@ -51,7 +113,56 @@ impl EditorDoc {
             guide,
             path: Some(path.to_path_buf()),
             dirty: false,
+            tree_history: TreeHistory::default(),
         })
+    }
+
+    fn checkpoint(&self) -> TreeCheckpoint {
+        TreeCheckpoint {
+            guide: self.guide.clone(),
+            dirty: self.dirty,
+        }
+    }
+
+    fn restore(&mut self, checkpoint: TreeCheckpoint) {
+        self.guide = checkpoint.guide;
+        self.dirty = checkpoint.dirty;
+    }
+
+    fn push_tree_checkpoint(&mut self) {
+        self.tree_history.push(self.checkpoint());
+    }
+
+    /// Whether a tree/title undo step is available.
+    pub fn can_undo_tree(&self) -> bool {
+        self.tree_history.can_undo()
+    }
+
+    /// Whether a tree/title redo step is available.
+    pub fn can_redo_tree(&self) -> bool {
+        self.tree_history.can_redo()
+    }
+
+    /// Undo the last tree/title op. Returns `false` when the stack is empty.
+    ///
+    /// Body edits use the GTK buffer stack, not this history.
+    pub fn undo_tree(&mut self) -> bool {
+        let current = self.checkpoint();
+        let Some(previous) = self.tree_history.undo(current) else {
+            return false;
+        };
+        self.restore(previous);
+        true
+    }
+
+    /// Redo the last undone tree/title op. Returns `false` when empty.
+    pub fn redo_tree(&mut self) -> bool {
+        let current = self.checkpoint();
+        let Some(next) = self.tree_history.redo(current) else {
+            return false;
+        };
+        self.restore(next);
+        true
     }
 
     /// In-memory Guide.
@@ -81,16 +192,25 @@ impl EditorDoc {
 
     /// Rename the Node at `path` via the Core-model mutation API.
     pub fn set_title(&mut self, path: &NodePath, title: impl Into<String>) -> Result<()> {
-        self.guide.set_title(path, title)?;
-        self.dirty = true;
-        Ok(())
+        self.push_tree_checkpoint();
+        match self.guide.set_title(path, title) {
+            Ok(()) => {
+                self.dirty = true;
+                Ok(())
+            }
+            Err(err) => {
+                self.tree_history.discard_last_push();
+                Err(err)
+            }
+        }
     }
 
     /// Replace the Node body with a subset rewrite from `doc`.
     ///
     /// Only this Node’s RTF bytes change; siblings keep their original opaque
     /// payloads. Soft-fail / exotic markup is intentionally replaced once the
-    /// caller supplies an edit Document.
+    /// caller supplies an edit Document. Does **not** push the tree undo stack
+    /// (body undo lives on the GTK buffer).
     pub fn set_body(&mut self, path: &NodePath, doc: &Document) -> Result<()> {
         let original = self.guide.node(path)?.rtf_body().to_vec();
         let bytes = bytes_for_save(&original, Some(doc));
@@ -104,9 +224,17 @@ impl EditorDoc {
     /// New Nodes get an empty title, minimal valid empty RTF (`nextguide-rtf`),
     /// no children, and an empty Preserve-through bag (library default).
     pub fn insert_child(&mut self, parent: &NodePath, index: usize) -> Result<NodePath> {
-        let path = self.guide.insert_child(parent, index)?;
+        self.push_tree_checkpoint();
+        let path = match self.guide.insert_child(parent, index) {
+            Ok(path) => path,
+            Err(err) => {
+                self.tree_history.discard_last_push();
+                return Err(err);
+            }
+        };
         if let Err(err) = self.guide.set_rtf_body(&path, empty_rtf()) {
             let _ = self.guide.remove_node(&path);
+            self.tree_history.discard_last_push();
             return Err(err);
         }
         self.dirty = true;
@@ -117,9 +245,17 @@ impl EditorDoc {
     ///
     /// Preserve-through bags for the removed subtree are dropped with it.
     pub fn remove_node(&mut self, path: &NodePath) -> Result<()> {
-        self.guide.remove_node(path)?;
-        self.dirty = true;
-        Ok(())
+        self.push_tree_checkpoint();
+        match self.guide.remove_node(path) {
+            Ok(()) => {
+                self.dirty = true;
+                Ok(())
+            }
+            Err(err) => {
+                self.tree_history.discard_last_push();
+                Err(err)
+            }
+        }
     }
 
     /// Move the Node at `from` under `to_parent` at `index` (`len` = append).
@@ -132,9 +268,17 @@ impl EditorDoc {
         to_parent: &NodePath,
         index: usize,
     ) -> Result<NodePath> {
-        let path = self.guide.move_node(from, to_parent, index)?;
-        self.dirty = true;
-        Ok(path)
+        self.push_tree_checkpoint();
+        match self.guide.move_node(from, to_parent, index) {
+            Ok(path) => {
+                self.dirty = true;
+                Ok(path)
+            }
+            Err(err) => {
+                self.tree_history.discard_last_push();
+                Err(err)
+            }
+        }
     }
 
     /// Persist the Guide to its opened path and clear dirty.

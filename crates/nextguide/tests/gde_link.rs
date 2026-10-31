@@ -7,7 +7,7 @@ use nextguide_gde::{check_structural, NodePath};
 use nextguide_rtf::{Document, Run, SpanStyle};
 use nextguide::{
     body_view_from_rtf, launch_path_from_args, load_guide, needs_dirty_prompt, visible_tree,
-    window_title_for_path, DirtyPromptChoice, EditorDoc, RecentFiles,
+    window_title_for_path, DirtyPromptChoice, EditorDoc, RecentFiles, TREE_UNDO_LIMIT,
 };
 
 fn repo_data(name: &str) -> PathBuf {
@@ -445,4 +445,164 @@ fn remove_node_drops_deleted_subtree_from_saved_guide() {
     check_structural(&rewritten).expect("structural after delete");
     assert!(!rewritten.windows(b"Page1".len()).any(|w| w == b"Page1"));
     assert!(!rewritten.windows(b"Child1".len()).any(|w| w == b"Child1"));
+}
+
+#[test]
+fn undo_title_restores_previous_title_and_dirty() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    let before = doc.guide().node(&page1).unwrap().title().to_string();
+    assert!(!doc.can_undo_tree());
+    assert!(!doc.can_redo_tree());
+
+    doc.set_title(&page1, "Page1-renamed").expect("rename");
+    assert!(doc.is_dirty());
+    assert!(doc.can_undo_tree());
+    assert!(!doc.can_redo_tree());
+
+    assert!(doc.undo_tree());
+    assert_eq!(doc.guide().node(&page1).unwrap().title(), before);
+    assert!(!doc.is_dirty());
+    assert!(!doc.can_undo_tree());
+    assert!(doc.can_redo_tree());
+}
+
+#[test]
+fn redo_title_restores_renamed_title() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    doc.set_title(&page1, "Page1-renamed").expect("rename");
+    assert!(doc.undo_tree());
+    assert!(doc.redo_tree());
+    assert_eq!(doc.guide().node(&page1).unwrap().title(), "Page1-renamed");
+    assert!(doc.is_dirty());
+    assert!(doc.can_undo_tree());
+    assert!(!doc.can_redo_tree());
+}
+
+#[test]
+fn set_body_does_not_push_tree_undo_stack() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    doc.set_body(&page1, &Document::plain("body only"))
+        .expect("body");
+    assert!(doc.is_dirty());
+    assert!(!doc.can_undo_tree());
+    assert!(!doc.undo_tree());
+}
+
+#[test]
+fn undo_insert_and_remove_restores_tree() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    let before_len = doc.guide().node(&page1).unwrap().children().len();
+
+    let inserted = doc.insert_child(&page1, before_len).expect("insert");
+    assert_eq!(
+        doc.guide().node(&page1).unwrap().children().len(),
+        before_len + 1
+    );
+    assert!(doc.undo_tree());
+    assert_eq!(
+        doc.guide().node(&page1).unwrap().children().len(),
+        before_len
+    );
+    assert!(doc
+        .guide()
+        .node(&inserted)
+        .is_err());
+
+    doc.remove_node(&NodePath::from_indices(vec![0, 0]))
+        .expect("remove Child1");
+    assert_eq!(
+        doc.guide().node(&page1).unwrap().children().len(),
+        before_len - 1
+    );
+    assert!(doc.undo_tree());
+    assert_eq!(
+        doc.guide().node(&page1).unwrap().children().len(),
+        before_len
+    );
+    assert_eq!(
+        doc.guide()
+            .node(&NodePath::from_indices(vec![0, 0]))
+            .unwrap()
+            .title(),
+        "Child1"
+    );
+}
+
+#[test]
+fn undo_move_restores_sibling_order() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let parent = NodePath::from_indices(vec![0]);
+    let from = NodePath::from_indices(vec![0, 0]);
+    let titles_before: Vec<_> = doc
+        .guide()
+        .node(&parent)
+        .unwrap()
+        .children()
+        .iter()
+        .map(|n| n.title().to_string())
+        .collect();
+
+    doc.move_node(&from, &parent, 2).expect("move");
+    let titles_moved: Vec<_> = doc
+        .guide()
+        .node(&parent)
+        .unwrap()
+        .children()
+        .iter()
+        .map(|n| n.title().to_string())
+        .collect();
+    assert_ne!(titles_before, titles_moved);
+
+    assert!(doc.undo_tree());
+    let titles_after: Vec<_> = doc
+        .guide()
+        .node(&parent)
+        .unwrap()
+        .children()
+        .iter()
+        .map(|n| n.title().to_string())
+        .collect();
+    assert_eq!(titles_before, titles_after);
+}
+
+#[test]
+fn tree_undo_survives_intervening_selection_style_ops() {
+    // Selection changes are a UI concern; the app stack itself must keep history
+    // across any number of non-tree ops (here: body rewrite).
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    let before = doc.guide().node(&page1).unwrap().title().to_string();
+    doc.set_title(&page1, "Renamed").expect("title");
+    doc.set_body(&page1, &Document::plain("later body"))
+        .expect("body");
+    assert!(doc.can_undo_tree());
+    assert!(doc.undo_tree());
+    assert_eq!(doc.guide().node(&page1).unwrap().title(), before);
+}
+
+#[test]
+fn tree_undo_depth_is_capped() {
+    let mut doc = EditorDoc::new();
+    let root = NodePath::root();
+    for i in 0..(TREE_UNDO_LIMIT + 5) {
+        let path = doc.insert_child(&root, i).expect("insert");
+        doc.set_title(&path, format!("N{i}")).expect("title");
+    }
+    let mut undos = 0;
+    while doc.undo_tree() {
+        undos += 1;
+        assert!(undos <= TREE_UNDO_LIMIT);
+    }
+    assert_eq!(undos, TREE_UNDO_LIMIT);
+}
+
+#[test]
+fn failed_tree_op_does_not_push_undo() {
+    let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    assert!(doc.remove_node(&NodePath::root()).is_err());
+    assert!(!doc.can_undo_tree());
 }
