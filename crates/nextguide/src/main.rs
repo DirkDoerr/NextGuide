@@ -14,8 +14,9 @@ mod ui {
         load as load_rtf, Block, Document, FontFamily, FontSize, LoadBody, Run, SpanStyle,
     };
     use nextguide::{
-        default_recent_store_path, needs_dirty_prompt, window_title_for_path, DirtyPromptChoice,
-        EditorDoc, RecentFiles, TreeRow, APP_ID, UNDO_DEPTH_LIMIT,
+        default_recent_store_path, needs_dirty_prompt, present, window_title_for_path,
+        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, RecentFiles, TreeRow, APP_ID,
+        UNDO_DEPTH_LIMIT,
     };
     use relm4::gtk;
     use relm4::gtk::glib;
@@ -61,6 +62,7 @@ mod ui {
         recent_menu: gtk::Box,
         file_popover: gtk::Popover,
         recent_popover: gtk::Popover,
+        save_button: gtk::Button,
     }
 
     #[derive(Debug)]
@@ -129,9 +131,18 @@ mod ui {
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
 
-                    // File / Edit / Format / Tree menus (spec menubar intent).
-                    gtk::HeaderBar {
-                        pack_start = &gtk::MenuButton {
+                    // Toolbar under the operating-system title bar. File starts the
+                    // row; Save is an icon beside it. Edit, Format, and Tree stay
+                    // reachable here until their own tickets move those commands.
+                    gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 6,
+                        set_margin_top: 4,
+                        set_margin_bottom: 4,
+                        set_margin_start: 6,
+                        set_margin_end: 6,
+
+                        gtk::MenuButton {
                             set_label: "File",
                             set_always_show_arrow: false,
                             #[wrap(Some)]
@@ -151,11 +162,6 @@ mod ui {
                                         set_label: "Open…",
                                         set_has_frame: false,
                                         connect_clicked => Msg::OpenDialog,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Save",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::Save,
                                     },
                                     gtk::Button {
                                         set_label: "Save As…",
@@ -191,7 +197,17 @@ mod ui {
                                 },
                             },
                         },
-                        pack_start = &gtk::MenuButton {
+                        gtk::Box {
+                            set_tooltip_text: Some("Save (Ctrl+S)"),
+                            #[name = "save_button"]
+                            gtk::Button {
+                                set_icon_name: "document-save-symbolic",
+                                set_tooltip_text: Some("Save (Ctrl+S)"),
+                                set_focus_on_click: false,
+                                connect_clicked => Msg::Save,
+                            },
+                        },
+                        gtk::MenuButton {
                             set_label: "Edit",
                             set_always_show_arrow: false,
                             #[wrap(Some)]
@@ -214,7 +230,7 @@ mod ui {
                                 },
                             },
                         },
-                        pack_start = &gtk::MenuButton {
+                        gtk::MenuButton {
                             set_label: "Format",
                             set_always_show_arrow: false,
                             #[wrap(Some)]
@@ -276,7 +292,7 @@ mod ui {
                                 },
                             },
                         },
-                        pack_start = &gtk::MenuButton {
+                        gtk::MenuButton {
                             set_label: "Tree",
                             set_always_show_arrow: false,
                             #[wrap(Some)]
@@ -479,7 +495,7 @@ mod ui {
             let model = AppModel {
                 doc: Some(EditorDoc::new()),
                 selected: None,
-                status: "Untitled Guide — add a Node to begin.".into(),
+                status: String::new(),
                 tree_store,
                 tree_view,
                 body_buffer: body_buffer.clone(),
@@ -493,6 +509,7 @@ mod ui {
                 recent_menu: gtk::Box::new(gtk::Orientation::Vertical, 2),
                 file_popover: gtk::Popover::new(),
                 recent_popover: gtk::Popover::new(),
+                save_button: gtk::Button::new(),
             };
 
             let widgets = view_output!();
@@ -521,6 +538,7 @@ mod ui {
             let recent_menu = widgets.recent_menu.clone();
             let file_popover = widgets.file_popover.clone();
             let recent_popover = widgets.recent_popover.clone();
+            let save_button = widgets.save_button.clone();
 
             // Body-local format shortcuts: B/I/U and list toggles.
             let key = gtk::EventControllerKey::new();
@@ -621,10 +639,12 @@ mod ui {
                 recent_menu,
                 file_popover,
                 recent_popover,
+                save_button,
                 ..model
             };
             model.rebuild_recent_menu(&sender);
             model.refresh_title(&widgets);
+            model.show_unselected_body();
 
             if let Some(path) = init {
                 sender.input(Msg::Opened(path));
@@ -702,7 +722,7 @@ mod ui {
                         return;
                     }
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Nothing to save.".into();
+                        self.publish_outcome(ActionOutcome::NothingToSave);
                         return;
                     };
                     match doc.save() {
@@ -724,7 +744,7 @@ mod ui {
                         return;
                     }
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Nothing to save.".into();
+                        self.publish_outcome(ActionOutcome::NothingToSave);
                         return;
                     };
                     match doc.save_as(&path) {
@@ -739,11 +759,11 @@ mod ui {
                     }
                 }
                 Msg::Saved => {
-                    self.status = "Saved.".into();
+                    self.publish_outcome(ActionOutcome::Success);
                     self.refresh_title(widgets);
                 }
                 Msg::SaveFailed(msg) => {
-                    self.status = format!("Save failed: {msg}");
+                    self.publish_outcome(ActionOutcome::SaveFailed { detail: msg });
                 }
                 Msg::DirtyChoice(choice) => match choice {
                     DirtyPromptChoice::Cancel => {
@@ -775,7 +795,7 @@ mod ui {
                         }
                         let Some(doc) = self.doc.as_mut() else {
                             self.pending = None;
-                            self.status = "Nothing to save.".into();
+                            self.publish_outcome(ActionOutcome::NothingToSave);
                             return;
                         };
                         match doc.save() {
@@ -832,9 +852,8 @@ mod ui {
                             };
                         }
                         Err(err) => {
-                            self.set_body_text("");
                             self.selected = None;
-                            self.set_body_editable(false);
+                            self.show_unselected_body();
                             self.status = format!("Select failed: {err}");
                         }
                     }
@@ -847,8 +866,7 @@ mod ui {
                     }
                     self.selected = None;
                     self.body_dirty = false;
-                    self.set_body_text("");
-                    self.set_body_editable(false);
+                    self.show_unselected_body();
                 }
                 Msg::TitleEdited { path, title } => {
                     self.focus_pane = FocusPane::Tree;
@@ -999,8 +1017,7 @@ mod ui {
                         Ok(()) => {
                             self.selected = None;
                             self.body_dirty = false;
-                            self.set_body_text("");
-                            self.set_body_editable(false);
+                            self.show_unselected_body();
                             self.after_tree_op(widgets, None, &format!("Deleted {selected}"));
                         }
                         Err(err) => {
@@ -1175,8 +1192,7 @@ mod ui {
                 } else {
                     self.selected = None;
                     self.body_dirty = false;
-                    self.set_body_text("");
-                    self.set_body_editable(false);
+                    self.show_unselected_body();
                     self.tree_view.selection().unselect_all();
                 }
             }
@@ -1246,11 +1262,43 @@ mod ui {
                 .unwrap_or(self.body_dirty)
         }
 
+        fn editor_snapshot(&self) -> EditorSnapshot {
+            EditorSnapshot {
+                guide_open: self.doc.is_some(),
+                dirty: self.session_dirty(),
+                has_nodes: self
+                    .doc
+                    .as_ref()
+                    .map(|doc| !doc.visible_tree().is_empty())
+                    .unwrap_or(false),
+            }
+        }
+
         fn refresh_title(&self, widgets: &AppModelWidgets) {
             let dirty = self.session_dirty();
             let path = self.doc.as_ref().and_then(|d| d.path());
             let title = window_title_for_path(path, dirty);
             widgets.main_window.set_title(Some(&title));
+            let presented = present(&self.editor_snapshot(), None);
+            self.save_button.set_sensitive(presented.save_enabled);
+        }
+
+        /// Publish a bottom-line sentence only when presentation says the action failed.
+        fn publish_outcome(&mut self, outcome: ActionOutcome) {
+            if let Some(sentence) = present(&self.editor_snapshot(), Some(outcome)).status_sentence
+            {
+                self.status = sentence;
+            }
+        }
+
+        /// Hint or blank body when no Node is selected. The hint is not editable.
+        fn show_unselected_body(&self) {
+            let presented = present(&self.editor_snapshot(), None);
+            match presented.empty_hint {
+                Some(hint) => self.set_body_text(hint),
+                None => self.set_body_text(""),
+            }
+            self.set_body_editable(false);
         }
 
         fn request_with_dirty_prompt(
@@ -1397,8 +1445,7 @@ mod ui {
                 &self.doc.as_ref().map(|d| d.visible_tree()).unwrap_or_default(),
             );
             self.tree_view.expand_all();
-            self.set_body_text("");
-            self.set_body_editable(false);
+            self.show_unselected_body();
             self.refresh_title(widgets);
         }
 
@@ -1408,9 +1455,9 @@ mod ui {
             self.body_dirty = false;
             self.pending = None;
             fill_tree(&self.tree_store, &[]);
-            self.set_body_text("");
-            self.set_body_editable(false);
-            self.status = "Untitled Guide — add a Node to begin.".into();
+            self.show_unselected_body();
+            // The empty-Guide sentence lives in the body now, not on the bottom line.
+            self.status.clear();
             self.refresh_title(widgets);
         }
 
@@ -1431,8 +1478,7 @@ mod ui {
                         &self.doc.as_ref().unwrap().visible_tree(),
                     );
                     self.tree_view.expand_all();
-                    self.set_body_text("");
-                    self.set_body_editable(false);
+                    self.show_unselected_body();
                     self.status = format!("Opened {}", path.display());
                     self.remember_recent(&path, sender);
                     self.refresh_title(widgets);
