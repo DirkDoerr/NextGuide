@@ -48,7 +48,7 @@ Recent files live in a nested `MenuButton`/`Popover` inside the File popover. Ea
 
 ## Answer
 
-Named `file_popover` / `recent_popover` in the Relm4 File header chrome; `dismiss_file_menus()` pops both down. Recent-row `connect_clicked` dismisses immediately before `Msg::Opened`. File actions New / Open… / Save / Save As… / Quit also dismiss so the parent File popover does not linger. Open / dirty-prompt / load paths are otherwise unchanged.
+Named `file_popover` / `recent_popover` in the Relm4 File header chrome; `dismiss_file_menus()` pops both down. Recent-row `connect_clicked` only emits `Msg::Opened`, which dismisses (single dismiss path) before the dirty-prompt/open logic. File actions New / Open… / Save / Save As… / Quit also dismiss so the parent File popover does not linger. Open / dirty-prompt / load paths are otherwise unchanged.
 
 ### Manual check
 

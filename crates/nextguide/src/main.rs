@@ -442,10 +442,9 @@ mod ui {
                 tag.set_family(Some(family_pango_name(family)));
                 tag_table.add(&tag);
             }
-            for pt in FontSize::ALLOWED_PT {
-                let size = FontSize::from_pt(pt).expect("allowed size");
+            for size in FontSize::ALL {
                 let tag = gtk::TextTag::new(Some(&size_tag_name(size)));
-                tag.set_size_points(f64::from(pt));
+                tag.set_size_points(f64::from(size.pt()));
                 tag_table.add(&tag);
             }
             tag_table.add(&list_bullet);
@@ -511,9 +510,8 @@ mod ui {
                 button.connect_clicked(move |_| tx.emit(Msg::SetFontFamily(family)));
                 widgets.font_family_box.append(&button);
             }
-            for pt in FontSize::ALLOWED_PT {
-                let size = FontSize::from_pt(pt).expect("allowed size");
-                let button = gtk::Button::with_label(&pt.to_string());
+            for size in FontSize::ALL {
+                let button = gtk::Button::with_label(&size.pt().to_string());
                 button.set_has_frame(false);
                 let tx = sender.input_sender().clone();
                 button.connect_clicked(move |_| tx.emit(Msg::SetFontSize(size)));
@@ -902,11 +900,8 @@ mod ui {
                     self.set_body_font(widgets, &names, family_tag_name(family), family.label());
                 }
                 Msg::SetFontSize(size) => {
-                    let names: Vec<String> = FontSize::ALLOWED_PT
-                        .iter()
-                        .filter_map(|pt| FontSize::from_pt(*pt))
-                        .map(size_tag_name)
-                        .collect();
+                    let names: Vec<String> =
+                        FontSize::ALL.iter().copied().map(size_tag_name).collect();
                     self.set_body_font(
                         widgets,
                         &names,
@@ -1222,6 +1217,9 @@ mod ui {
                 self.body_dirty = true;
                 self.status = format!("Set {label}");
                 self.refresh_title(widgets);
+            } else {
+                // Selection-only (no typing-style stack): tell the user why nothing changed.
+                self.status = format!("Select text to set {label}.");
             }
         }
 
@@ -1476,12 +1474,8 @@ mod ui {
                 button.set_tooltip_text(Some(&label));
                 let path = path.clone();
                 let open_sender = sender.clone();
-                let file_popover = self.file_popover.clone();
-                let recent_popover = self.recent_popover.clone();
+                // `Msg::Opened` dismisses the File/Recent popovers (single dismiss path).
                 button.connect_clicked(move |_| {
-                    // Immediate dismiss before the open/dirty-prompt path runs.
-                    recent_popover.popdown();
-                    file_popover.popdown();
                     open_sender.input(Msg::Opened(path.clone()));
                 });
                 self.recent_menu.append(&button);
@@ -1779,10 +1773,9 @@ mod ui {
                     .iter()
                     .filter_map(|f| table.lookup(family_tag_name(*f)).map(|t| (*f, t)))
                     .collect(),
-                sizes: FontSize::ALLOWED_PT
+                sizes: FontSize::ALL
                     .iter()
-                    .filter_map(|pt| FontSize::from_pt(*pt))
-                    .filter_map(|s| table.lookup(&size_tag_name(s)).map(|t| (s, t)))
+                    .filter_map(|s| table.lookup(&size_tag_name(*s)).map(|t| (*s, t)))
                     .collect(),
             }
         }
