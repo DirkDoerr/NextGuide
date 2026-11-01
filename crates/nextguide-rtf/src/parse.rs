@@ -1,6 +1,8 @@
 //! Pragmatic subset RTF → edit model.
 
-use crate::model::{Block, Document, Run, SpanStyle};
+use std::collections::HashMap;
+
+use crate::model::{Block, Document, FontFamily, FontSize, Run, SpanStyle};
 use crate::LoadBody;
 
 /// Load RTF bytes into an edit model, or soft-fail with a plain-text fallback.
@@ -39,6 +41,11 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
     p.expect(b'{')?;
     p.control_word()?; // rtf1 / rtf
     let mut style = SpanStyle::default();
+    // Char formatting is scoped to `{}` groups (saved on `{`, restored on `}`) and, as in
+    // RTF, persists across `\par`.
+    let mut style_stack: Vec<SpanStyle> = Vec::new();
+    let mut fonts: HashMap<i32, FontKind> = HashMap::new();
+    let mut default_font: Option<i32> = None;
     let mut blocks = Vec::new();
     let mut runs = Vec::new();
     let mut list_kind: Option<ListKind> = None;
@@ -53,14 +60,26 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
                     // List destination: capture bullet vs numbered, then skip the group.
                     list_kind = Some(p.peek_list_kind_in_group());
                     p.skip_group_from_inside(&mut depth)?;
-                } else if p.starts_with(b"\\*") || p.starts_with(b"\\pntext") {
-                    // Other destinations / list markers: skip.
+                } else if p.starts_with(b"\\fonttbl") {
+                    // Font table: record index -> face for `\fN`; names never become Run text.
+                    p.read_fonttbl(&mut depth, &mut fonts)?;
+                    apply_default_font(&mut style, &fonts, default_font);
+                } else if p.starts_with(b"\\*")
+                    || p.starts_with(b"\\pntext")
+                    || p.starts_with(b"\\colortbl")
+                {
+                    // Destinations / list markers (colour table entries end in `;`): skip.
                     p.skip_group_from_inside(&mut depth)?;
+                } else {
+                    style_stack.push(style);
                 }
             }
             Some(b'}') => {
                 p.bump();
                 depth -= 1;
+                if let Some(saved) = style_stack.pop() {
+                    style = saved;
+                }
             }
             Some(b'\\') => {
                 let word = p.control_word()?;
@@ -68,7 +87,6 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
                     "par" => {
                         flush_block(&mut blocks, &mut runs, list_kind);
                         list_kind = None;
-                        style = SpanStyle::default();
                     }
                     "pard" => {
                         // Reset paragraph; keep open runs until \par.
@@ -78,6 +96,20 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
                     "i" => style.italic = word_on(&p),
                     "ul" => style.underline = true,
                     "ulnone" => style.underline = false,
+                    "deff" => {
+                        default_font = p.last_param;
+                        apply_default_font(&mut style, &fonts, default_font);
+                    }
+                    "f" => {
+                        // Symbol (bullet font) and unknown indices are not body faces.
+                        match p.last_param.and_then(|n| fonts.get(&n)) {
+                            Some(FontKind::Face(family)) => style.family = *family,
+                            Some(FontKind::Symbol) | None => {}
+                        }
+                    }
+                    "fs" => {
+                        style.size = FontSize::snap_half_points(p.last_param.unwrap_or(0));
+                    }
                     "tab" => push_text(&mut runs, style, "\t"),
                     "line" => push_text(&mut runs, style, "\n"),
                     "'" => {
@@ -113,6 +145,36 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
     }
 
     Ok(Document { blocks })
+}
+
+/// What a font-table entry means for body text.
+#[derive(Clone, Copy)]
+enum FontKind {
+    /// Arial or (any other face) Sans.
+    Face(FontFamily),
+    /// Symbol / charset 2: list-marker font, never a body face.
+    Symbol,
+}
+
+fn classify_font(name: &str, symbol_charset: bool) -> FontKind {
+    let name = name.trim();
+    if symbol_charset || name.eq_ignore_ascii_case("symbol") {
+        FontKind::Symbol
+    } else if name.eq_ignore_ascii_case("arial") {
+        FontKind::Face(FontFamily::Arial)
+    } else {
+        FontKind::Face(FontFamily::Sans)
+    }
+}
+
+fn apply_default_font(
+    style: &mut SpanStyle,
+    fonts: &HashMap<i32, FontKind>,
+    default_font: Option<i32>,
+) {
+    if let Some(FontKind::Face(family)) = default_font.and_then(|n| fonts.get(&n)) {
+        style.family = *family;
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -286,6 +348,57 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Consume a `\fonttbl` group (we are inside its `{`), recording `\fN` -> face.
+    /// Entry names are never emitted as text.
+    fn read_fonttbl(
+        &mut self,
+        depth: &mut i32,
+        fonts: &mut HashMap<i32, FontKind>,
+    ) -> Result<(), ParseError> {
+        let start_depth = *depth;
+        let mut index: Option<i32> = None;
+        let mut name = String::new();
+        let mut symbol = false;
+        while self.pos < self.bytes.len() && *depth >= start_depth {
+            match self.peek() {
+                Some(b'{') => {
+                    self.bump();
+                    *depth += 1;
+                    if self.starts_with(b"\\*") {
+                        // e.g. `{\*\falt Helvetica}` / panose: not part of the face name.
+                        self.skip_group_from_inside(depth)?;
+                    } else {
+                        index = None;
+                        name.clear();
+                        symbol = false;
+                    }
+                }
+                Some(b'}') => {
+                    self.bump();
+                    *depth -= 1;
+                }
+                Some(b'\\') => match self.control_word()?.as_str() {
+                    "f" => index = self.last_param,
+                    "fcharset" => symbol = self.last_param == Some(2),
+                    _ => {}
+                },
+                Some(b';') => {
+                    self.bump();
+                    if let Some(i) = index {
+                        fonts.insert(i, classify_font(&name, symbol));
+                    }
+                    index = None;
+                    name.clear();
+                    symbol = false;
+                }
+                Some(b'\r') | Some(b'\n') => self.bump(),
+                Some(_) => name.push(self.char()?),
+                None => break,
+            }
+        }
+        Ok(())
+    }
+
     fn skip_group_from_inside(&mut self, depth: &mut i32) -> Result<(), ParseError> {
         // We are already inside the `{` that opened this group; depth includes it.
         let start_depth = *depth;
@@ -342,7 +455,19 @@ fn strip_controls_rough(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'{' | b'}' => i += 1,
+            b'{' => {
+                // Skip fonttbl / ignorable destinations so font names never dominate fallback.
+                let rest = &bytes[i + 1..];
+                if rest.starts_with(b"\\fonttbl")
+                    || rest.starts_with(b"\\colortbl")
+                    || rest.starts_with(b"\\*")
+                {
+                    i = skip_braced_group(bytes, i);
+                    continue;
+                }
+                i += 1;
+            }
+            b'}' => i += 1,
             b'\\' => {
                 i += 1;
                 if i < bytes.len() && bytes[i] == b'\'' {
@@ -376,4 +501,34 @@ fn strip_controls_rough(s: &str) -> String {
         }
     }
     out
+}
+
+/// Advance past a `{…}` group starting at `open` (index of `{`). Returns index after `}`.
+fn skip_braced_group(bytes: &[u8], open: usize) -> usize {
+    let mut depth = 0i32;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                i += 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            b'\\' => {
+                // Keep brace depth correct inside skipped groups (\{ \} \\).
+                i += 1;
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    i
 }

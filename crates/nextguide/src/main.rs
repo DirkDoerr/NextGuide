@@ -1,5 +1,8 @@
 //! NextGuide Editor v1 — Relm4 / GTK4 two-pane shell.
 
+#[cfg(all(feature = "ui", target_os = "macos"))]
+mod macos_focus;
+
 #[cfg(feature = "ui")]
 mod ui {
     use std::cell::Cell;
@@ -7,7 +10,9 @@ mod ui {
     use std::rc::Rc;
 
     use nextguide_gde::NodePath;
-    use nextguide_rtf::{load as load_rtf, Block, Document, LoadBody, Run, SpanStyle};
+    use nextguide_rtf::{
+        load as load_rtf, Block, Document, FontFamily, FontSize, LoadBody, Run, SpanStyle,
+    };
     use nextguide::{
         default_recent_store_path, needs_dirty_prompt, window_title_for_path, DirtyPromptChoice,
         EditorDoc, RecentFiles, TreeRow, APP_ID, UNDO_DEPTH_LIMIT,
@@ -54,6 +59,8 @@ mod ui {
         recent_store: PathBuf,
         pending: Option<PendingAction>,
         recent_menu: gtk::Box,
+        file_popover: gtk::Popover,
+        recent_popover: gtk::Popover,
     }
 
     #[derive(Debug)]
@@ -82,6 +89,10 @@ mod ui {
         ToggleItalic,
         /// Toggle underline on the body selection.
         ToggleUnderline,
+        /// Set the font family on the body selection.
+        SetFontFamily(FontFamily),
+        /// Set the font size on the body selection.
+        SetFontSize(FontSize),
         /// Toggle bullet list on the selected body lines.
         ToggleBulletList,
         /// Toggle numbered list on the selected body lines.
@@ -124,6 +135,7 @@ mod ui {
                             set_label: "File",
                             set_always_show_arrow: false,
                             #[wrap(Some)]
+                            #[name = "file_popover"]
                             set_popover = &gtk::Popover {
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Vertical,
@@ -158,6 +170,7 @@ mod ui {
                                         set_has_frame: false,
                                         set_halign: gtk::Align::Start,
                                         #[wrap(Some)]
+                                        #[name = "recent_popover"]
                                         set_popover = &gtk::Popover {
                                             #[name = "recent_menu"]
                                             gtk::Box {
@@ -225,6 +238,27 @@ mod ui {
                                         set_label: "Underline",
                                         set_has_frame: false,
                                         connect_clicked => Msg::ToggleUnderline,
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
+                                    gtk::Label {
+                                        set_label: "Font",
+                                        set_xalign: 0.0,
+                                    },
+                                    #[name = "font_family_box"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                        set_spacing: 2,
+                                    },
+                                    gtk::Label {
+                                        set_label: "Size (pt)",
+                                        set_xalign: 0.0,
+                                    },
+                                    #[name = "font_size_box"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                        set_spacing: 2,
                                     },
                                     gtk::Separator {
                                         set_orientation: gtk::Orientation::Horizontal,
@@ -322,6 +356,7 @@ mod ui {
                             #[wrap(Some)]
                             set_child = body_view = &gtk::TextView {
                                 set_buffer: Some(&model.body_buffer),
+                                add_css_class: "ng-body",
                                 // Empty / no-selection sessions keep the body disabled.
                                 set_editable: false,
                                 set_cursor_visible: false,
@@ -402,6 +437,16 @@ mod ui {
             tag_table.add(&bold);
             tag_table.add(&italic);
             tag_table.add(&underline);
+            for family in FontFamily::ALL {
+                let tag = gtk::TextTag::new(Some(family_tag_name(family)));
+                tag.set_family(Some(family_pango_name(family)));
+                tag_table.add(&tag);
+            }
+            for size in FontSize::ALL {
+                let tag = gtk::TextTag::new(Some(&size_tag_name(size)));
+                tag.set_size_points(f64::from(size.pt()));
+                tag_table.add(&tag);
+            }
             tag_table.add(&list_bullet);
             tag_table.add(&list_numbered);
             let body_buffer = gtk::TextBuffer::builder()
@@ -446,12 +491,36 @@ mod ui {
                 recent_store,
                 pending: None,
                 recent_menu: gtk::Box::new(gtk::Orientation::Vertical, 2),
+                file_popover: gtk::Popover::new(),
+                recent_popover: gtk::Popover::new(),
             };
 
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
+            // Untagged body text reads as the default face and size (Arial 9 pt).
+            relm4::set_global_css(&format!(
+                ".ng-body {{ font-family: {}; font-size: {}pt; }}",
+                family_pango_name(FontFamily::default()),
+                FontSize::DEFAULT.pt()
+            ));
+            for family in FontFamily::ALL {
+                let button = gtk::Button::with_label(family.label());
+                button.set_has_frame(false);
+                let tx = sender.input_sender().clone();
+                button.connect_clicked(move |_| tx.emit(Msg::SetFontFamily(family)));
+                widgets.font_family_box.append(&button);
+            }
+            for size in FontSize::ALL {
+                let button = gtk::Button::with_label(&size.pt().to_string());
+                button.set_has_frame(false);
+                let tx = sender.input_sender().clone();
+                button.connect_clicked(move |_| tx.emit(Msg::SetFontSize(size)));
+                widgets.font_size_box.append(&button);
+            }
             let body_view = widgets.body_view.clone();
             let recent_menu = widgets.recent_menu.clone();
+            let file_popover = widgets.file_popover.clone();
+            let recent_popover = widgets.recent_popover.clone();
 
             // Body-local format shortcuts: B/I/U and list toggles.
             let key = gtk::EventControllerKey::new();
@@ -550,6 +619,8 @@ mod ui {
             let model = AppModel {
                 body_view,
                 recent_menu,
+                file_popover,
+                recent_popover,
                 ..model
             };
             model.rebuild_recent_menu(&sender);
@@ -558,6 +629,14 @@ mod ui {
             if let Some(path) = init {
                 sender.input(Msg::Opened(path));
             }
+
+            // Terminal launches leave the process backgrounded on macOS (and
+            // occasionally elsewhere). Present + platform activate once the
+            // event loop is running and the window can become key.
+            let launch_window = root.clone();
+            glib::idle_add_local_once(move || {
+                bring_main_window_forward(&launch_window);
+            });
 
             ComponentParts { model, widgets }
         }
@@ -571,6 +650,7 @@ mod ui {
         ) {
             match message {
                 Msg::New => {
+                    self.dismiss_file_menus();
                     self.request_with_dirty_prompt(
                         widgets,
                         &sender,
@@ -579,6 +659,7 @@ mod ui {
                     );
                 }
                 Msg::OpenDialog => {
+                    self.dismiss_file_menus();
                     self.request_with_dirty_prompt(
                         widgets,
                         &sender,
@@ -587,6 +668,7 @@ mod ui {
                     );
                 }
                 Msg::Opened(path) => {
+                    self.dismiss_file_menus();
                     // CLI / Recent may open while dirty — prompt first.
                     if self.pending.is_none()
                         && needs_dirty_prompt(self.session_dirty())
@@ -605,6 +687,7 @@ mod ui {
                     self.status = format!("Open failed: {msg}");
                 }
                 Msg::Save => {
+                    self.dismiss_file_menus();
                     if let Err(err) = self.commit_body_if_needed() {
                         sender.input(Msg::SaveFailed(err));
                         return;
@@ -628,6 +711,7 @@ mod ui {
                     }
                 }
                 Msg::SaveAsDialog => {
+                    self.dismiss_file_menus();
                     if let Err(err) = self.commit_body_if_needed() {
                         sender.input(Msg::SaveFailed(err));
                         return;
@@ -709,6 +793,7 @@ mod ui {
                     }
                 },
                 Msg::RequestQuit => {
+                    self.dismiss_file_menus();
                     self.request_with_dirty_prompt(
                         widgets,
                         &sender,
@@ -806,6 +891,23 @@ mod ui {
                 }
                 Msg::ToggleUnderline => {
                     self.toggle_body_style(widgets, "underline");
+                }
+                Msg::SetFontFamily(family) => {
+                    let names: Vec<String> = FontFamily::ALL
+                        .iter()
+                        .map(|f| family_tag_name(*f).to_string())
+                        .collect();
+                    self.set_body_font(widgets, &names, family_tag_name(family), family.label());
+                }
+                Msg::SetFontSize(size) => {
+                    let names: Vec<String> =
+                        FontSize::ALL.iter().copied().map(size_tag_name).collect();
+                    self.set_body_font(
+                        widgets,
+                        &names,
+                        &size_tag_name(size),
+                        &format!("{} pt", size.pt()),
+                    );
                 }
                 Msg::ToggleBulletList => {
                     self.toggle_body_list(widgets, LineKind::Bullet);
@@ -1099,6 +1201,28 @@ mod ui {
             }
         }
 
+        /// Apply one tag from a mutually exclusive group (family or size) to the selection.
+        fn set_body_font(
+            &mut self,
+            widgets: &AppModelWidgets,
+            group: &[String],
+            tag: &str,
+            label: &str,
+        ) {
+            if !self.body_view.is_editable() {
+                self.status = "Select a Node to format its body.".into();
+                return;
+            }
+            if apply_exclusive_tag(&self.body_buffer, group, tag) {
+                self.body_dirty = true;
+                self.status = format!("Set {label}");
+                self.refresh_title(widgets);
+            } else {
+                // Selection-only (no typing-style stack): tell the user why nothing changed.
+                self.status = format!("Select text to set {label}.");
+            }
+        }
+
         fn toggle_body_list(&mut self, widgets: &AppModelWidgets, kind: LineKind) {
             if !self.body_view.is_editable() {
                 self.status = "Select a Node to format its body.".into();
@@ -1325,6 +1449,13 @@ mod ui {
             self.rebuild_recent_menu(sender);
         }
 
+        /// Pop down File and nested Recent popovers (MenuButton does not auto-dismiss
+        /// nested menus when a recent row is activated).
+        fn dismiss_file_menus(&self) {
+            self.recent_popover.popdown();
+            self.file_popover.popdown();
+        }
+
         fn rebuild_recent_menu(&self, sender: &ComponentSender<Self>) {
             while let Some(child) = self.recent_menu.first_child() {
                 self.recent_menu.remove(&child);
@@ -1343,6 +1474,7 @@ mod ui {
                 button.set_tooltip_text(Some(&label));
                 let path = path.clone();
                 let open_sender = sender.clone();
+                // `Msg::Opened` dismisses the File/Recent popovers (single dismiss path).
                 button.connect_clicked(move |_| {
                     open_sender.input(Msg::Opened(path.clone()));
                 });
@@ -1577,6 +1709,94 @@ mod ui {
             }
             if run.style.underline {
                 buffer.apply_tag_by_name("underline", &start, &end);
+            }
+            if run.style.family != FontFamily::default() {
+                buffer.apply_tag_by_name(family_tag_name(run.style.family), &start, &end);
+            }
+            if run.style.size != FontSize::default() {
+                buffer.apply_tag_by_name(&size_tag_name(run.style.size), &start, &end);
+            }
+        }
+    }
+
+    fn family_tag_name(family: FontFamily) -> &'static str {
+        match family {
+            FontFamily::Arial => "family-arial",
+            FontFamily::Sans => "family-sans",
+        }
+    }
+
+    /// Pango family name for a [`FontFamily`] (`Sans` is the system default sans alias).
+    fn family_pango_name(family: FontFamily) -> &'static str {
+        match family {
+            FontFamily::Arial => "Arial",
+            FontFamily::Sans => "Sans",
+        }
+    }
+
+    fn size_tag_name(size: FontSize) -> String {
+        format!("size-{}", size.pt())
+    }
+
+    /// Replace any tag in `group` on the selection with `tag`. Needs a non-empty selection.
+    fn apply_exclusive_tag(buffer: &gtk::TextBuffer, group: &[String], tag: &str) -> bool {
+        let Some((start, end)) = buffer.selection_bounds() else {
+            return false;
+        };
+        if start == end {
+            return false;
+        }
+        for name in group {
+            buffer.remove_tag_by_name(name, &start, &end);
+        }
+        buffer.apply_tag_by_name(tag, &start, &end);
+        true
+    }
+
+    /// Looked-up style tags for reading [`SpanStyle`] back out of the buffer.
+    struct StyleTags {
+        bold: Option<gtk::TextTag>,
+        italic: Option<gtk::TextTag>,
+        underline: Option<gtk::TextTag>,
+        families: Vec<(FontFamily, gtk::TextTag)>,
+        sizes: Vec<(FontSize, gtk::TextTag)>,
+    }
+
+    impl StyleTags {
+        fn lookup(buffer: &gtk::TextBuffer) -> Self {
+            let table = buffer.tag_table();
+            Self {
+                bold: table.lookup("bold"),
+                italic: table.lookup("italic"),
+                underline: table.lookup("underline"),
+                families: FontFamily::ALL
+                    .iter()
+                    .filter_map(|f| table.lookup(family_tag_name(*f)).map(|t| (*f, t)))
+                    .collect(),
+                sizes: FontSize::ALL
+                    .iter()
+                    .filter_map(|s| table.lookup(&size_tag_name(*s)).map(|t| (*s, t)))
+                    .collect(),
+            }
+        }
+
+        fn style_at(&self, iter: &gtk::TextIter) -> SpanStyle {
+            SpanStyle {
+                bold: self.bold.as_ref().is_some_and(|t| iter.has_tag(t)),
+                italic: self.italic.as_ref().is_some_and(|t| iter.has_tag(t)),
+                underline: self.underline.as_ref().is_some_and(|t| iter.has_tag(t)),
+                family: self
+                    .families
+                    .iter()
+                    .find(|(_, t)| iter.has_tag(t))
+                    .map(|(f, _)| *f)
+                    .unwrap_or_default(),
+                size: self
+                    .sizes
+                    .iter()
+                    .find(|(_, t)| iter.has_tag(t))
+                    .map(|(s, _)| *s)
+                    .unwrap_or_default(),
             }
         }
     }
@@ -1820,9 +2040,7 @@ mod ui {
             return Document::empty();
         }
 
-        let bold = buffer.tag_table().lookup("bold");
-        let italic = buffer.tag_table().lookup("italic");
-        let underline = buffer.tag_table().lookup("underline");
+        let style_tags = StyleTags::lookup(buffer);
         let list_bullet = buffer.tag_table().lookup("list-bullet");
         let list_numbered = buffer.tag_table().lookup("list-numbered");
 
@@ -1849,9 +2067,7 @@ mod ui {
                 buffer,
                 abs_content_start,
                 &content,
-                bold.as_ref(),
-                italic.as_ref(),
-                underline.as_ref(),
+                &style_tags,
             );
             match kind {
                 LineKind::Paragraph => blocks.push(Block::Paragraph(runs)),
@@ -1905,9 +2121,7 @@ mod ui {
         buffer: &gtk::TextBuffer,
         start_off: usize,
         content: &str,
-        bold: Option<&gtk::TextTag>,
-        italic: Option<&gtk::TextTag>,
-        underline: Option<&gtk::TextTag>,
+        tags: &StyleTags,
     ) -> Vec<Run> {
         if content.is_empty() {
             return Vec::new();
@@ -1915,11 +2129,7 @@ mod ui {
         let chars: Vec<char> = content.chars().collect();
         let style_at = |i: usize| -> SpanStyle {
             let iter = buffer.iter_at_offset((start_off + i) as i32);
-            SpanStyle {
-                bold: bold.map(|t| iter.has_tag(t)).unwrap_or(false),
-                italic: italic.map(|t| iter.has_tag(t)).unwrap_or(false),
-                underline: underline.map(|t| iter.has_tag(t)).unwrap_or(false),
-            }
+            tags.style_at(&iter)
         };
         let mut runs = Vec::new();
         let mut run_start = 0usize;
@@ -1945,6 +2155,13 @@ mod ui {
     pub fn run(initial_path: Option<PathBuf>) {
         let app = RelmApp::new(APP_ID);
         app.run::<AppModel>(initial_path);
+    }
+
+    /// Raise the main window and activate the process for terminal launches.
+    fn bring_main_window_forward(window: &impl IsA<gtk::Window>) {
+        window.present();
+        #[cfg(target_os = "macos")]
+        crate::macos_focus::activate_running_app();
     }
 }
 

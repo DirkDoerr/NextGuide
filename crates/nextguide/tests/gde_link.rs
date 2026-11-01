@@ -201,6 +201,40 @@ fn body_view_shows_guide_node_text() {
 }
 
 #[test]
+fn import_sample_bodies_do_not_leak_fonttbl_arial() {
+    let doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    fn walk(doc: &EditorDoc, path: &NodePath) {
+        let view = doc.body_view(path).expect("body");
+        assert!(
+            !view.display_text.contains("Arial"),
+            "fonttbl leaked at {path}: {:?}",
+            view.display_text
+        );
+        // The fonttbl entry ends in `;`; it must not survive as body text either.
+        assert!(
+            !view.display_text.contains(';'),
+            "fonttbl `;` leaked at {path}: {:?}",
+            view.display_text
+        );
+        // The fonttbl entry ends in `;`; it must not survive as body text either.
+        assert!(
+            !view.display_text.contains(';'),
+            "fonttbl `;` leaked at {path}: {:?}",
+            view.display_text
+        );
+        let node = doc.guide().node(path).expect("node");
+        for i in 0..node.children().len() {
+            walk(doc, &path.child(i));
+        }
+    }
+    let root = NodePath::root();
+    let dummy = doc.guide().node(&root).expect("dummy");
+    for i in 0..dummy.children().len() {
+        walk(&doc, &root.child(i));
+    }
+}
+
+#[test]
 fn save_unchanged_keeps_structural_round_trip_and_rtf_bytes() {
     let src = repo_data("ImportSample.gde");
     let original = std::fs::read(&src).unwrap();
@@ -605,4 +639,44 @@ fn failed_tree_op_does_not_push_undo() {
     let mut doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
     assert!(doc.remove_node(&NodePath::root()).is_err());
     assert!(!doc.can_undo_tree());
+}
+
+#[test]
+fn set_body_font_family_and_size_survive_save_and_reload() {
+    use nextguide_rtf::{load, Block, FontFamily, FontSize, LoadBody};
+
+    let src = repo_data("ImportSample.gde");
+    let mut doc = EditorDoc::open(&src).expect("open");
+    let page1 = NodePath::from_indices(vec![0]);
+    let child1 = NodePath::from_indices(vec![0, 0]);
+    let sibling_before = doc.guide().node(&child1).unwrap().rtf_body().to_vec();
+
+    let style = SpanStyle {
+        family: FontFamily::Sans,
+        size: FontSize::from_pt(14).unwrap(),
+        ..SpanStyle::default()
+    };
+    let edited = Document {
+        blocks: vec![Block::Paragraph(vec![
+            Run { text: "Big sans".into(), style },
+            Run { text: " plain".into(), style: SpanStyle::default() },
+        ])],
+    };
+    doc.set_body(&page1, &edited).expect("set body");
+
+    let out = std::env::temp_dir().join("nextguide-font-edit-save.gde");
+    doc.save_to(&out).expect("save");
+    let rewritten = std::fs::read(&out).unwrap();
+    let _ = std::fs::remove_file(&out);
+
+    let again = nextguide_gde::load_bytes(&rewritten).unwrap();
+    let LoadBody::Editable(reloaded) = load(again.node(&page1).unwrap().rtf_body()) else {
+        panic!("edited body must parse");
+    };
+    assert_eq!(reloaded, edited);
+    assert_eq!(
+        again.node(&child1).unwrap().rtf_body(),
+        sibling_before.as_slice(),
+        "untouched sibling keeps original RTF bytes"
+    );
 }

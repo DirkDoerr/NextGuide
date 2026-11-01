@@ -43,6 +43,10 @@ A buildable product **spec** for **Editor v1**: a cross-platform desktop editor 
 - [Document session model](issues/19-document-session-model.md): New/Open/Save As + dirty Save/Discard/Cancel; Untitled title; RecentFiles (5); `launch_path_from_args` / bare New
 - [Undo/redo](issues/20-undo-redo.md): Two stacks — GTK body (irreversible fill on selection) + `EditorDoc` tree/title history (cap 50); Edit menu / shortcuts follow focus
 - [Win/macOS release bundles](issues/21-win-macos-release-bundles.md): `packaging/` scripts — macOS `.app`+DMG (`dylibbundler` GTK) and Windows NSIS (MSYS2 GTK DLL tree); `nextguide-cli` in both; manual updates; signing optional; Linux installers deferred
+- [Font table leak](issues/22-font-support.md): `\fonttbl` skipped (not shown as body text); font names and table `;` never reach `Run` text; untouched RTF bytes preserved
+- [Menu close on Recent](issues/23-menu-close-on-recent-file.md): named `file_popover`/`recent_popover`; `Msg::Opened` and File actions dismiss both; Open/dirty-prompt paths unchanged
+- [Window focus on launch](issues/24-window-focus-on-launch.md): idle `present()` + macOS AppKit activate for terminal launches; Windows/Linux via `present()`
+- [Font family and size](issues/25-font-family-and-size-selection.md): `SpanStyle` family (Arial/Sans) + size (9-24pt, default 9); `\fonttbl` + `\fN`/`\fsN`; reader keeps char formatting across `\par`; Format popover selection-only
 
 ## Not yet specified
 

@@ -16,6 +16,10 @@ nextguide-gde = { path = "../nextguide-gde" }
 nextguide-rtf = { path = "../nextguide-rtf" }
 relm4 = { version = "0.9.1", optional = true }
 
+# Terminal-launched GUI apps on macOS stay backgrounded unless NSApp is activated.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2.7"
+
 [[bin]]
 name = "nextguide"
 path = "src/main.rs"
