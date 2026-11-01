@@ -15,8 +15,8 @@ mod ui {
     };
     use nextguide::{
         default_recent_store_path, needs_dirty_prompt, present, window_title_for_path,
-        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, RecentFiles, TreeRow, APP_ID,
-        UNDO_DEPTH_LIMIT,
+        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, RecentFiles, StructureRefusal,
+        TreeRow, APP_ID, UNDO_DEPTH_LIMIT,
     };
     use relm4::gtk;
     use relm4::gtk::glib;
@@ -63,6 +63,13 @@ mod ui {
         file_popover: gtk::Popover,
         recent_popover: gtk::Popover,
         save_button: gtk::Button,
+        insert_child_button: gtk::Button,
+        insert_sibling_button: gtk::Button,
+        delete_button: gtk::Button,
+        move_up_button: gtk::Button,
+        move_down_button: gtk::Button,
+        indent_button: gtk::Button,
+        outdent_button: gtk::Button,
     }
 
     #[derive(Debug)]
@@ -132,8 +139,8 @@ mod ui {
                     set_orientation: gtk::Orientation::Vertical,
 
                     // Toolbar under the operating-system title bar. File starts the
-                    // row; Save is an icon beside it. Edit, Format, and Tree stay
-                    // reachable here until their own tickets move those commands.
+                    // row; Save is an icon beside it. Edit and Format stay until
+                    // their tickets. Structure commands live on this row.
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_spacing: 6,
@@ -292,57 +299,105 @@ mod ui {
                                 },
                             },
                         },
-                        gtk::MenuButton {
-                            set_label: "Tree",
-                            set_always_show_arrow: false,
-                            #[wrap(Some)]
-                            set_popover = &gtk::Popover {
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    set_spacing: 2,
-                                    set_margin_all: 6,
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 6,
+                            set_margin_start: 12,
 
-                                    gtk::Button {
-                                        set_label: "Insert Child",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::InsertChild,
+                            gtk::Box {
+                                set_tooltip_text: Some("Insert Child"),
+                                #[name = "insert_child_button"]
+                                gtk::Button {
+                                    set_tooltip_text: Some("Insert Child"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::InsertChild,
+                                    // GTK4 keeps only the last of icon-name and label, so both
+                                    // live in the child: the standard add symbol plus the words.
+                                    #[wrap(Some)]
+                                    set_child = &gtk::Box {
+                                        set_spacing: 6,
+                                        gtk::Image {
+                                            set_icon_name: Some("list-add-symbolic"),
+                                        },
+                                        gtk::Label {
+                                            set_label: "Insert Child",
+                                        },
                                     },
-                                    gtk::Button {
-                                        set_label: "Insert Sibling",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::InsertSibling,
+                                },
+                            },
+                            gtk::Box {
+                                set_tooltip_text: Some("Insert Sibling"),
+                                #[name = "insert_sibling_button"]
+                                gtk::Button {
+                                    set_tooltip_text: Some("Insert Sibling"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::InsertSibling,
+                                    #[wrap(Some)]
+                                    set_child = &gtk::Box {
+                                        set_spacing: 6,
+                                        gtk::Image {
+                                            set_icon_name: Some("list-add-symbolic"),
+                                        },
+                                        gtk::Label {
+                                            set_label: "Insert Sibling",
+                                        },
                                     },
-                                    gtk::Separator {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Delete",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::DeleteNode,
-                                    },
-                                    gtk::Separator {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Move Up",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::MoveUp,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Move Down",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::MoveDown,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Indent",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::Indent,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Outdent",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::Outdent,
-                                    },
+                                },
+                            },
+                            gtk::Box {
+                                set_tooltip_text: Some("Delete"),
+                                #[name = "delete_button"]
+                                gtk::Button {
+                                    set_icon_name: "edit-delete-symbolic",
+                                    set_tooltip_text: Some("Delete"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::DeleteNode,
+                                },
+                            },
+                        },
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 6,
+                            set_margin_start: 12,
+
+                            gtk::Box {
+                                set_tooltip_text: Some("Move Up"),
+                                #[name = "move_up_button"]
+                                gtk::Button {
+                                    set_icon_name: "go-up-symbolic",
+                                    set_tooltip_text: Some("Move Up"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::MoveUp,
+                                },
+                            },
+                            gtk::Box {
+                                set_tooltip_text: Some("Move Down"),
+                                #[name = "move_down_button"]
+                                gtk::Button {
+                                    set_icon_name: "go-down-symbolic",
+                                    set_tooltip_text: Some("Move Down"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::MoveDown,
+                                },
+                            },
+                            gtk::Box {
+                                set_tooltip_text: Some("Indent"),
+                                #[name = "indent_button"]
+                                gtk::Button {
+                                    set_icon_name: "format-indent-more-symbolic",
+                                    set_tooltip_text: Some("Indent"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::Indent,
+                                },
+                            },
+                            gtk::Box {
+                                set_tooltip_text: Some("Outdent"),
+                                #[name = "outdent_button"]
+                                gtk::Button {
+                                    set_icon_name: "format-indent-less-symbolic",
+                                    set_tooltip_text: Some("Outdent"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::Outdent,
                                 },
                             },
                         },
@@ -510,6 +565,13 @@ mod ui {
                 file_popover: gtk::Popover::new(),
                 recent_popover: gtk::Popover::new(),
                 save_button: gtk::Button::new(),
+                insert_child_button: gtk::Button::new(),
+                insert_sibling_button: gtk::Button::new(),
+                delete_button: gtk::Button::new(),
+                move_up_button: gtk::Button::new(),
+                move_down_button: gtk::Button::new(),
+                indent_button: gtk::Button::new(),
+                outdent_button: gtk::Button::new(),
             };
 
             let widgets = view_output!();
@@ -539,6 +601,13 @@ mod ui {
             let file_popover = widgets.file_popover.clone();
             let recent_popover = widgets.recent_popover.clone();
             let save_button = widgets.save_button.clone();
+            let insert_child_button = widgets.insert_child_button.clone();
+            let insert_sibling_button = widgets.insert_sibling_button.clone();
+            let delete_button = widgets.delete_button.clone();
+            let move_up_button = widgets.move_up_button.clone();
+            let move_down_button = widgets.move_down_button.clone();
+            let indent_button = widgets.indent_button.clone();
+            let outdent_button = widgets.outdent_button.clone();
 
             // Body-local format shortcuts: B/I/U and list toggles.
             let key = gtk::EventControllerKey::new();
@@ -640,6 +709,13 @@ mod ui {
                 file_popover,
                 recent_popover,
                 save_button,
+                insert_child_button,
+                insert_sibling_button,
+                delete_button,
+                move_up_button,
+                move_down_button,
+                indent_button,
+                outdent_button,
                 ..model
             };
             model.rebuild_recent_menu(&sender);
@@ -867,6 +943,7 @@ mod ui {
                     self.selected = None;
                     self.body_dirty = false;
                     self.show_unselected_body();
+                    self.refresh_title(widgets);
                 }
                 Msg::TitleEdited { path, title } => {
                     self.focus_pane = FocusPane::Tree;
@@ -938,27 +1015,31 @@ mod ui {
                         self.status = format!("Could not apply body edit: {err}");
                         return;
                     }
-                    let parent = self
-                        .selected
-                        .clone()
-                        .unwrap_or_else(NodePath::root);
+                    // Nothing selected: the child hangs under the hidden Dummy root.
+                    let parent = self.selected.clone().unwrap_or_else(NodePath::root);
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Open a Guide before restructuring.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::NoGuide,
+                        ));
                         return;
                     };
                     let index = match doc.guide().node(&parent) {
                         Ok(node) => node.children().len(),
                         Err(err) => {
-                            self.status = format!("Insert failed: {err}");
+                            self.publish_outcome(ActionOutcome::InsertChildFailed {
+                                detail: err.to_string(),
+                            });
                             return;
                         }
                     };
                     match doc.insert_child(&parent, index) {
                         Ok(path) => {
-                            self.after_tree_op(widgets, Some(path), "Inserted child");
+                            self.after_tree_op(widgets, Some(path));
                         }
                         Err(err) => {
-                            self.status = format!("Insert failed: {err}");
+                            self.publish_outcome(ActionOutcome::InsertChildFailed {
+                                detail: err.to_string(),
+                            });
                         }
                     }
                 }
@@ -968,31 +1049,43 @@ mod ui {
                         return;
                     }
                     let Some(selected) = self.selected.clone() else {
-                        self.status = "Select a Node to insert a sibling.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::SelectNodeToInsertSibling,
+                        ));
                         return;
                     };
                     if selected.is_root() {
-                        self.status = "Cannot insert a sibling of the Dummy root.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::CannotInsertSiblingOfDummyRoot,
+                        ));
                         return;
                     }
                     let Some(parent) = selected.parent() else {
-                        self.status = "Insert sibling failed: no parent.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::InsertSiblingNoParent,
+                        ));
                         return;
                     };
                     let Some(index) = selected.last_index() else {
-                        self.status = "Insert sibling failed: no index.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::InsertSiblingNoIndex,
+                        ));
                         return;
                     };
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Open a Guide before restructuring.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::NoGuide,
+                        ));
                         return;
                     };
                     match doc.insert_child(&parent, index + 1) {
                         Ok(path) => {
-                            self.after_tree_op(widgets, Some(path), "Inserted sibling");
+                            self.after_tree_op(widgets, Some(path));
                         }
                         Err(err) => {
-                            self.status = format!("Insert sibling failed: {err}");
+                            self.publish_outcome(ActionOutcome::InsertSiblingFailed {
+                                detail: err.to_string(),
+                            });
                         }
                     }
                 }
@@ -1002,15 +1095,21 @@ mod ui {
                         return;
                     }
                     let Some(selected) = self.selected.clone() else {
-                        self.status = "Select a Node to delete.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::SelectNodeToDelete,
+                        ));
                         return;
                     };
                     if selected.is_root() {
-                        self.status = "Cannot delete the Dummy root.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::CannotDeleteDummyRoot,
+                        ));
                         return;
                     }
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Open a Guide before restructuring.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::NoGuide,
+                        ));
                         return;
                     };
                     match doc.remove_node(&selected) {
@@ -1018,10 +1117,12 @@ mod ui {
                             self.selected = None;
                             self.body_dirty = false;
                             self.show_unselected_body();
-                            self.after_tree_op(widgets, None, &format!("Deleted {selected}"));
+                            self.after_tree_op(widgets, None);
                         }
                         Err(err) => {
-                            self.status = format!("Delete failed: {err}");
+                            self.publish_outcome(ActionOutcome::DeleteFailed {
+                                detail: err.to_string(),
+                            });
                         }
                     }
                 }
@@ -1037,39 +1138,53 @@ mod ui {
                         return;
                     }
                     let Some(selected) = self.selected.clone() else {
-                        self.status = "Select a Node to indent.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::SelectNodeToIndent,
+                        ));
                         return;
                     };
                     let Some(parent) = selected.parent() else {
-                        self.status = "Cannot indent the Dummy root.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::CannotIndentDummyRoot,
+                        ));
                         return;
                     };
                     let Some(index) = selected.last_index() else {
-                        self.status = "Indent failed: no index.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::IndentNoIndex,
+                        ));
                         return;
                     };
                     if index == 0 {
-                        self.status = "Indent needs a previous sibling.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::IndentNeedsPreviousSibling,
+                        ));
                         return;
                     }
                     let new_parent = parent.child(index - 1);
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Open a Guide before restructuring.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::NoGuide,
+                        ));
                         return;
                     };
                     let dest_index = match doc.guide().node(&new_parent) {
                         Ok(node) => node.children().len(),
                         Err(err) => {
-                            self.status = format!("Indent failed: {err}");
+                            self.publish_outcome(ActionOutcome::IndentFailed {
+                                detail: err.to_string(),
+                            });
                             return;
                         }
                     };
                     match doc.move_node(&selected, &new_parent, dest_index) {
                         Ok(path) => {
-                            self.after_tree_op(widgets, Some(path), "Indented");
+                            self.after_tree_op(widgets, Some(path));
                         }
                         Err(err) => {
-                            self.status = format!("Indent failed: {err}");
+                            self.publish_outcome(ActionOutcome::IndentFailed {
+                                detail: err.to_string(),
+                            });
                         }
                     }
                 }
@@ -1079,32 +1194,44 @@ mod ui {
                         return;
                     }
                     let Some(selected) = self.selected.clone() else {
-                        self.status = "Select a Node to outdent.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::SelectNodeToOutdent,
+                        ));
                         return;
                     };
                     let Some(parent) = selected.parent() else {
-                        self.status = "Cannot outdent the Dummy root.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::CannotOutdentDummyRoot,
+                        ));
                         return;
                     };
                     // Top-level under Dummy root cannot outdent further.
                     let Some(grandparent) = parent.parent() else {
-                        self.status = "Already at top level.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::AlreadyAtTopLevel,
+                        ));
                         return;
                     };
                     let Some(parent_index) = parent.last_index() else {
-                        self.status = "Outdent failed: no parent index.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::OutdentNoParentIndex,
+                        ));
                         return;
                     };
                     let Some(doc) = self.doc.as_mut() else {
-                        self.status = "Open a Guide before restructuring.".into();
+                        self.publish_outcome(ActionOutcome::StructureRefused(
+                            StructureRefusal::NoGuide,
+                        ));
                         return;
                     };
                     match doc.move_node(&selected, &grandparent, parent_index + 1) {
                         Ok(path) => {
-                            self.after_tree_op(widgets, Some(path), "Outdented");
+                            self.after_tree_op(widgets, Some(path));
                         }
                         Err(err) => {
-                            self.status = format!("Outdent failed: {err}");
+                            self.publish_outcome(ActionOutcome::OutdentFailed {
+                                detail: err.to_string(),
+                            });
                         }
                     }
                 }
@@ -1271,6 +1398,7 @@ mod ui {
                     .as_ref()
                     .map(|doc| !doc.visible_tree().is_empty())
                     .unwrap_or(false),
+                node_selected: self.selected.is_some(),
             }
         }
 
@@ -1281,6 +1409,16 @@ mod ui {
             widgets.main_window.set_title(Some(&title));
             let presented = present(&self.editor_snapshot(), None);
             self.save_button.set_sensitive(presented.save_enabled);
+            self.insert_child_button
+                .set_sensitive(presented.insert_child_enabled);
+            self.insert_sibling_button
+                .set_sensitive(presented.insert_sibling_enabled);
+            self.delete_button.set_sensitive(presented.delete_enabled);
+            self.move_up_button.set_sensitive(presented.move_up_enabled);
+            self.move_down_button
+                .set_sensitive(presented.move_down_enabled);
+            self.indent_button.set_sensitive(presented.indent_enabled);
+            self.outdent_button.set_sensitive(presented.outdent_enabled);
         }
 
         /// Publish a bottom-line sentence only when presentation says the action failed.
@@ -1548,13 +1686,10 @@ mod ui {
         }
 
         /// Refresh the tree from the Core model and optionally select `path`.
-        fn after_tree_op(
-            &mut self,
-            widgets: &AppModelWidgets,
-            select: Option<NodePath>,
-            status: &str,
-        ) {
-            self.focus_pane = FocusPane::Tree;
+        ///
+        /// A successful structure edit publishes no sentence and does not take focus,
+        /// so the pane that was active before the click keeps the undo stack.
+        fn after_tree_op(&mut self, widgets: &AppModelWidgets, select: Option<NodePath>) {
             let Some(doc) = self.doc.as_ref() else {
                 return;
             };
@@ -1565,7 +1700,6 @@ mod ui {
                 self.selected = None;
                 select_path_in_tree(&self.tree_view, &self.tree_store, &path);
             }
-            self.status = status.into();
             self.refresh_title(widgets);
         }
 
@@ -1575,31 +1709,41 @@ mod ui {
                 return;
             }
             let Some(selected) = self.selected.clone() else {
-                self.status = "Select a Node to reorder.".into();
+                self.publish_outcome(ActionOutcome::StructureRefused(
+                    StructureRefusal::SelectNodeToReorder,
+                ));
                 return;
             };
             let Some(parent) = selected.parent() else {
-                self.status = "Cannot reorder the Dummy root.".into();
+                self.publish_outcome(ActionOutcome::StructureRefused(
+                    StructureRefusal::CannotReorderDummyRoot,
+                ));
                 return;
             };
             let Some(index) = selected.last_index() else {
-                self.status = "Reorder failed: no index.".into();
+                self.publish_outcome(ActionOutcome::StructureRefused(
+                    StructureRefusal::ReorderNoIndex,
+                ));
                 return;
             };
             let Some(doc) = self.doc.as_mut() else {
-                self.status = "Open a Guide before restructuring.".into();
+                self.publish_outcome(ActionOutcome::StructureRefused(StructureRefusal::NoGuide));
                 return;
             };
             let sibling_count = match doc.guide().node(&parent) {
                 Ok(node) => node.children().len(),
                 Err(err) => {
-                    self.status = format!("Reorder failed: {err}");
+                    self.publish_outcome(ActionOutcome::ReorderFailed {
+                        detail: err.to_string(),
+                    });
                     return;
                 }
             };
             let new_index = index as isize + delta;
             if new_index < 0 || new_index as usize >= sibling_count {
-                self.status = "Already at edge of siblings.".into();
+                self.publish_outcome(ActionOutcome::StructureRefused(
+                    StructureRefusal::AlreadyAtEdgeOfSiblings,
+                ));
                 return;
             }
             // move_node index is the insertion slot before removal adjustment.
@@ -1610,11 +1754,12 @@ mod ui {
             };
             match doc.move_node(&selected, &parent, insert_at) {
                 Ok(path) => {
-                    let label = if delta < 0 { "Moved up" } else { "Moved down" };
-                    self.after_tree_op(widgets, Some(path), label);
+                    self.after_tree_op(widgets, Some(path));
                 }
                 Err(err) => {
-                    self.status = format!("Reorder failed: {err}");
+                    self.publish_outcome(ActionOutcome::ReorderFailed {
+                        detail: err.to_string(),
+                    });
                 }
             }
         }
