@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 
 use nextguide_gde::{Guide, Result};
 
-pub use presentation::{present, ActionOutcome, EditorSnapshot, Presentation, StructureRefusal};
+pub use presentation::{
+    present, ActionOutcome, EditorSnapshot, FontFamilyControl, FontSizeControl, FormatToggle,
+    FormattingControls, FormattingSnapshot, ListLineKind, Presentation, StructureRefusal,
+};
 pub use recent::{RecentFiles, RECENT_LIMIT};
 pub use session::{
     body_view, body_view_from_rtf, visible_tree, BodyView, EditorDoc, TreeRow, TREE_UNDO_LIMIT,
@@ -89,9 +92,7 @@ pub fn launch_path_from_args(args: impl IntoIterator<Item = OsString>) -> Option
 pub fn default_recent_store_path() -> PathBuf {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config"))
-        })
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
         .unwrap_or_else(|| PathBuf::from("."));
     base.join("nextguide").join("recent")
 }

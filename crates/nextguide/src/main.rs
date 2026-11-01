@@ -15,7 +15,8 @@ mod ui {
     };
     use nextguide::{
         default_recent_store_path, needs_dirty_prompt, present, window_title_for_path,
-        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, RecentFiles, StructureRefusal,
+        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, FormatToggle,
+        FormattingControls, FormattingSnapshot, ListLineKind, RecentFiles, StructureRefusal,
         TreeRow, APP_ID, UNDO_DEPTH_LIMIT,
     };
     use relm4::gtk;
@@ -70,9 +71,10 @@ mod ui {
         move_down_button: gtk::Button,
         indent_button: gtk::Button,
         outdent_button: gtk::Button,
+        format_bar: FormatBar,
     }
 
-    #[derive(Debug)]
+    #[derive(Clone, Debug)]
     enum Msg {
         New,
         OpenDialog,
@@ -89,6 +91,8 @@ mod ui {
         ClearBody,
         TitleEdited { path: NodePath, title: String },
         BodyChanged,
+        /// Caret or selection moved in the body. Refresh formatting controls.
+        BodySelectionChanged,
         FocusPane(FocusPane),
         Undo,
         Redo,
@@ -139,8 +143,8 @@ mod ui {
                     set_orientation: gtk::Orientation::Vertical,
 
                     // Toolbar under the operating-system title bar. File starts the
-                    // row; Save is an icon beside it. Edit and Format stay until
-                    // their tickets. Structure commands live on this row.
+                    // row; Save is an icon beside it. Formatting controls follow Edit.
+                    // Structure commands follow those. Edit stays until its ticket.
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_spacing: 6,
@@ -237,67 +241,11 @@ mod ui {
                                 },
                             },
                         },
-                        gtk::MenuButton {
-                            set_label: "Format",
-                            set_always_show_arrow: false,
-                            #[wrap(Some)]
-                            set_popover = &gtk::Popover {
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    set_spacing: 2,
-                                    set_margin_all: 6,
-
-                                    gtk::Button {
-                                        set_label: "Bold",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::ToggleBold,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Italic",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::ToggleItalic,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Underline",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::ToggleUnderline,
-                                    },
-                                    gtk::Separator {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                    },
-                                    gtk::Label {
-                                        set_label: "Font",
-                                        set_xalign: 0.0,
-                                    },
-                                    #[name = "font_family_box"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                        set_spacing: 2,
-                                    },
-                                    gtk::Label {
-                                        set_label: "Size (pt)",
-                                        set_xalign: 0.0,
-                                    },
-                                    #[name = "font_size_box"]
-                                    gtk::Box {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                        set_spacing: 2,
-                                    },
-                                    gtk::Separator {
-                                        set_orientation: gtk::Orientation::Horizontal,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Bullet List",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::ToggleBulletList,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Numbered List",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::ToggleNumberedList,
-                                    },
-                                },
-                            },
+                        #[name = "formatting_box"]
+                        gtk::Box {
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 0,
+                            set_margin_start: 12,
                         },
                         gtk::Box {
                             set_orientation: gtk::Orientation::Horizontal,
@@ -535,7 +483,21 @@ mod ui {
                 }
                 body_sender.input(Msg::BodyChanged);
             });
+            let mark_sender = sender.clone();
+            let mark_suppress = suppress_body_signal.clone();
+            body_buffer.connect_mark_set(move |_, _, mark| {
+                if mark_suppress.get() {
+                    return;
+                }
+                let Some(name) = mark.name() else {
+                    return;
+                };
+                if name == "insert" || name == "selection_bound" {
+                    mark_sender.input(Msg::BodySelectionChanged);
+                }
+            });
 
+            let format_bar = FormatBar::new(&sender);
             let recent_store = default_recent_store_path();
             let recent = RecentFiles::load_from(&recent_store).unwrap_or_default();
 
@@ -572,6 +534,7 @@ mod ui {
                 move_down_button: gtk::Button::new(),
                 indent_button: gtk::Button::new(),
                 outdent_button: gtk::Button::new(),
+                format_bar,
             };
 
             let widgets = view_output!();
@@ -582,20 +545,7 @@ mod ui {
                 family_pango_name(FontFamily::default()),
                 FontSize::DEFAULT.pt()
             ));
-            for family in FontFamily::ALL {
-                let button = gtk::Button::with_label(family.label());
-                button.set_has_frame(false);
-                let tx = sender.input_sender().clone();
-                button.connect_clicked(move |_| tx.emit(Msg::SetFontFamily(family)));
-                widgets.font_family_box.append(&button);
-            }
-            for size in FontSize::ALL {
-                let button = gtk::Button::with_label(&size.pt().to_string());
-                button.set_has_frame(false);
-                let tx = sender.input_sender().clone();
-                button.connect_clicked(move |_| tx.emit(Msg::SetFontSize(size)));
-                widgets.font_size_box.append(&button);
-            }
+            model.format_bar.attach(&widgets.formatting_box);
             let body_view = widgets.body_view.clone();
             let recent_menu = widgets.recent_menu.clone();
             let file_popover = widgets.file_popover.clone();
@@ -969,6 +919,9 @@ mod ui {
                     self.body_dirty = true;
                     self.refresh_title(widgets);
                 }
+                Msg::BodySelectionChanged => {
+                    self.refresh_formatting();
+                }
                 Msg::FocusPane(pane) => {
                     self.focus_pane = pane;
                 }
@@ -1339,7 +1292,7 @@ mod ui {
             }
             if toggle_style_tag(&self.body_buffer, tag) {
                 self.body_dirty = true;
-                self.status = format!("Toggled {tag}");
+                self.publish_outcome(ActionOutcome::Formatted);
                 self.refresh_title(widgets);
             }
         }
@@ -1358,11 +1311,12 @@ mod ui {
             }
             if apply_exclusive_tag(&self.body_buffer, group, tag) {
                 self.body_dirty = true;
-                self.status = format!("Set {label}");
+                self.publish_outcome(ActionOutcome::Formatted);
                 self.refresh_title(widgets);
             } else {
                 // Selection-only (no typing-style stack): tell the user why nothing changed.
                 self.status = format!("Select text to set {label}.");
+                self.refresh_formatting();
             }
         }
 
@@ -1373,11 +1327,7 @@ mod ui {
             }
             if toggle_list_kind(&self.body_buffer, kind) {
                 self.body_dirty = true;
-                self.status = match kind {
-                    LineKind::Bullet => "Toggled bullet list".into(),
-                    LineKind::Numbered => "Toggled numbered list".into(),
-                    LineKind::Paragraph => "Cleared list".into(),
-                };
+                self.publish_outcome(ActionOutcome::Formatted);
                 self.refresh_title(widgets);
             }
         }
@@ -1399,6 +1349,79 @@ mod ui {
                     .map(|doc| !doc.visible_tree().is_empty())
                     .unwrap_or(false),
                 node_selected: self.selected.is_some(),
+                formatting: self.formatting_snapshot(),
+            }
+        }
+
+        /// Facts for bold, italic, underline, lists, and the font dropdowns.
+        fn formatting_snapshot(&self) -> FormattingSnapshot {
+            if !self.body_view.is_editable() {
+                return FormattingSnapshot::default();
+            }
+            let lines = list_lines_for_selection(&self.body_buffer);
+            let Some((start, end)) = self.body_buffer.selection_bounds() else {
+                return FormattingSnapshot {
+                    body_editing: true,
+                    lines,
+                    ..FormattingSnapshot::default()
+                };
+            };
+            if start.offset() == end.offset() {
+                return FormattingSnapshot {
+                    body_editing: true,
+                    lines,
+                    ..FormattingSnapshot::default()
+                };
+            }
+            let tags = StyleTags::lookup(&self.body_buffer);
+            let mut iter = start;
+            let end_off = end.offset();
+            let mut saw = false;
+            let mut all_bold = true;
+            let mut all_italic = true;
+            let mut all_underline = true;
+            let mut family: Option<FontFamily> = None;
+            let mut size: Option<FontSize> = None;
+            let mut mixed_family = false;
+            let mut mixed_size = false;
+            let mut cached_line = -1;
+            let mut prefix_len = 0;
+            while iter.offset() < end_off {
+                if iter.line() != cached_line {
+                    cached_line = iter.line();
+                    prefix_len = line_prefix_len(&self.body_buffer, cached_line);
+                }
+                let ch = iter.char();
+                if ch != '\n' && ch != '\r' && iter.line_offset() >= prefix_len {
+                    saw = true;
+                    let style = tags.style_at(&iter);
+                    all_bold &= style.bold;
+                    all_italic &= style.italic;
+                    all_underline &= style.underline;
+                    match family {
+                        None => family = Some(style.family),
+                        Some(current) if current != style.family => mixed_family = true,
+                        _ => {}
+                    }
+                    match size {
+                        None => size = Some(style.size),
+                        Some(current) if current != style.size => mixed_size = true,
+                        _ => {}
+                    }
+                }
+                if !iter.forward_char() {
+                    break;
+                }
+            }
+            FormattingSnapshot {
+                text_selected: saw,
+                all_bold: saw && all_bold,
+                all_italic: saw && all_italic,
+                all_underline: saw && all_underline,
+                shared_family: if saw && !mixed_family { family } else { None },
+                shared_size: if saw && !mixed_size { size } else { None },
+                body_editing: true,
+                lines,
             }
         }
 
@@ -1419,6 +1442,12 @@ mod ui {
                 .set_sensitive(presented.move_down_enabled);
             self.indent_button.set_sensitive(presented.indent_enabled);
             self.outdent_button.set_sensitive(presented.outdent_enabled);
+            self.format_bar.sync(&presented.formatting);
+        }
+
+        fn refresh_formatting(&self) {
+            let presented = present(&self.editor_snapshot(), None);
+            self.format_bar.sync(&presented.formatting);
         }
 
         /// Publish a bottom-line sentence only when presentation says the action failed.
@@ -1437,6 +1466,7 @@ mod ui {
                 None => self.set_body_text(""),
             }
             self.set_body_editable(false);
+            self.refresh_formatting();
         }
 
         fn request_with_dirty_prompt(
@@ -1793,6 +1823,189 @@ mod ui {
         }
     }
 
+    /// Formatting icon buttons and font dropdowns. The shell renders `FormattingControls`.
+    struct FormatBar {
+        bold: gtk::ToggleButton,
+        italic: gtk::ToggleButton,
+        underline: gtk::ToggleButton,
+        bullet: gtk::ToggleButton,
+        numbered: gtk::ToggleButton,
+        family: gtk::DropDown,
+        size: gtk::DropDown,
+        /// Set while syncing widgets so a dropdown notify does not apply a font.
+        suppress: Rc<Cell<bool>>,
+    }
+
+    impl FormatBar {
+        fn new(sender: &ComponentSender<AppModel>) -> Self {
+            let seed = present(
+                &EditorSnapshot {
+                    guide_open: false,
+                    dirty: false,
+                    has_nodes: false,
+                    node_selected: false,
+                    formatting: FormattingSnapshot::default(),
+                },
+                None,
+            )
+            .formatting;
+            let suppress = Rc::new(Cell::new(false));
+            let bold = format_toggle("format-text-bold-symbolic", sender, Msg::ToggleBold);
+            let italic = format_toggle("format-text-italic-symbolic", sender, Msg::ToggleItalic);
+            let underline = format_toggle(
+                "format-text-underline-symbolic",
+                sender,
+                Msg::ToggleUnderline,
+            );
+            let bullet = format_toggle(
+                "format-list-unordered-symbolic",
+                sender,
+                Msg::ToggleBulletList,
+            );
+            let numbered = format_toggle(
+                "format-list-ordered-symbolic",
+                sender,
+                Msg::ToggleNumberedList,
+            );
+            let family = font_dropdown(seed.family.choices.iter().map(|family| family.label()));
+            let size = font_dropdown(seed.size.choices.iter().map(|size| size.pt().to_string()));
+            connect_family_dropdown(&family, &suppress, sender, seed.family.choices);
+            connect_size_dropdown(&size, &suppress, sender, seed.size.choices);
+            Self {
+                bold,
+                italic,
+                underline,
+                bullet,
+                numbered,
+                family,
+                size,
+                suppress,
+            }
+        }
+
+        fn attach(&self, bar: &gtk::Box) {
+            let characters = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            characters.append(&self.bold);
+            characters.append(&self.italic);
+            characters.append(&self.underline);
+            let lists = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            lists.set_margin_start(12);
+            lists.append(&self.bullet);
+            lists.append(&self.numbered);
+            let fonts = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+            fonts.set_margin_start(12);
+            fonts.append(&self.family);
+            fonts.append(&self.size);
+            bar.append(&characters);
+            bar.append(&lists);
+            bar.append(&fonts);
+        }
+
+        fn sync(&self, controls: &FormattingControls) {
+            self.suppress.set(true);
+            sync_toggle(&self.bold, controls.bold);
+            sync_toggle(&self.italic, controls.italic);
+            sync_toggle(&self.underline, controls.underline);
+            sync_toggle(&self.bullet, controls.bullet_list);
+            sync_toggle(&self.numbered, controls.numbered_list);
+            sync_dropdown(
+                &self.family,
+                controls.family.enabled,
+                choice_index(controls.family.choices, controls.family.displayed),
+            );
+            sync_dropdown(
+                &self.size,
+                controls.size.enabled,
+                choice_index(controls.size.choices, controls.size.displayed),
+            );
+            self.suppress.set(false);
+        }
+    }
+
+    fn format_toggle(
+        icon: &str,
+        sender: &ComponentSender<AppModel>,
+        message: Msg,
+    ) -> gtk::ToggleButton {
+        let button = gtk::ToggleButton::new();
+        button.set_icon_name(icon);
+        button.set_focus_on_click(false);
+        let tx = sender.input_sender().clone();
+        button.connect_clicked(move |_| tx.emit(message.clone()));
+        button
+    }
+
+    fn font_dropdown(labels: impl IntoIterator<Item = impl AsRef<str>>) -> gtk::DropDown {
+        let owned: Vec<String> = labels
+            .into_iter()
+            .map(|label| label.as_ref().to_string())
+            .collect();
+        let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
+        let dropdown = gtk::DropDown::from_strings(&refs);
+        dropdown.set_focus_on_click(false);
+        dropdown.set_hexpand(false);
+        dropdown.set_selected(gtk::INVALID_LIST_POSITION);
+        dropdown
+    }
+
+    fn connect_family_dropdown(
+        dropdown: &gtk::DropDown,
+        suppress: &Rc<Cell<bool>>,
+        sender: &ComponentSender<AppModel>,
+        choices: &'static [FontFamily],
+    ) {
+        let suppress = suppress.clone();
+        let tx = sender.input_sender().clone();
+        dropdown.connect_selected_notify(move |dropdown| {
+            if suppress.get() {
+                return;
+            }
+            let Some(family) = choices.get(dropdown.selected() as usize).copied() else {
+                return;
+            };
+            tx.emit(Msg::SetFontFamily(family));
+        });
+    }
+
+    fn connect_size_dropdown(
+        dropdown: &gtk::DropDown,
+        suppress: &Rc<Cell<bool>>,
+        sender: &ComponentSender<AppModel>,
+        choices: &'static [FontSize],
+    ) {
+        let suppress = suppress.clone();
+        let tx = sender.input_sender().clone();
+        dropdown.connect_selected_notify(move |dropdown| {
+            if suppress.get() {
+                return;
+            }
+            let Some(size) = choices.get(dropdown.selected() as usize).copied() else {
+                return;
+            };
+            tx.emit(Msg::SetFontSize(size));
+        });
+    }
+
+    fn sync_toggle(button: &gtk::ToggleButton, control: FormatToggle) {
+        button.set_sensitive(control.enabled);
+        button.set_active(control.pressed);
+        button.set_tooltip_text(Some(control.tooltip));
+    }
+
+    fn sync_dropdown(dropdown: &gtk::DropDown, enabled: bool, selected: Option<u32>) {
+        dropdown.set_sensitive(enabled);
+        dropdown.set_selected(selected.unwrap_or(gtk::INVALID_LIST_POSITION));
+    }
+
+    fn choice_index<T: PartialEq>(choices: &[T], displayed: Option<T>) -> Option<u32> {
+        displayed.and_then(|value| {
+            choices
+                .iter()
+                .position(|item| *item == value)
+                .map(|index| index as u32)
+        })
+    }
+
     fn find_iter(
         store: &gtk::TreeStore,
         parent: Option<&gtk::TreeIter>,
@@ -2014,7 +2227,8 @@ mod ui {
     ///
     /// List structure is owned by `list-bullet` / `list-numbered` tags so
     /// [`document_from_buffer`] round-trips through the `nextguide-rtf` model.
-    fn toggle_list_kind(buffer: &gtk::TextBuffer, want: LineKind) -> bool {
+    /// Lines a list toggle would touch. A caret is its one line.
+    fn selection_line_span(buffer: &gtk::TextBuffer) -> (i32, i32) {
         let (sel_start, sel_end) = match buffer.selection_bounds() {
             Some(bounds) => bounds,
             None => {
@@ -2022,13 +2236,53 @@ mod ui {
                 (insert.clone(), insert)
             }
         };
-
         let start_line = sel_start.line();
         let mut end_line = sel_end.line();
-        if sel_end.line_offset() == 0 && sel_end.offset() > sel_start.offset() && end_line > start_line
+        if sel_end.line_offset() == 0
+            && sel_end.offset() > sel_start.offset()
+            && end_line > start_line
         {
             end_line -= 1;
         }
+        (start_line, end_line)
+    }
+
+    fn list_lines_for_selection(buffer: &gtk::TextBuffer) -> Vec<ListLineKind> {
+        let (start_line, end_line) = selection_line_span(buffer);
+        let list_bullet = buffer.tag_table().lookup("list-bullet");
+        let list_numbered = buffer.tag_table().lookup("list-numbered");
+        let mut lines = Vec::new();
+        for line in start_line..=end_line {
+            let Some(iter) = buffer.iter_at_line(line) else {
+                continue;
+            };
+            let kind = line_kind_from_tags(&iter, list_bullet.as_ref(), list_numbered.as_ref());
+            lines.push(match kind {
+                LineKind::Paragraph => ListLineKind::Paragraph,
+                LineKind::Bullet => ListLineKind::Bullet,
+                LineKind::Numbered => ListLineKind::Numbered,
+            });
+        }
+        lines
+    }
+
+    fn line_prefix_len(buffer: &gtk::TextBuffer, line: i32) -> i32 {
+        let Some(line_start) = buffer.iter_at_line(line) else {
+            return 0;
+        };
+        let list_bullet = buffer.tag_table().lookup("list-bullet");
+        let list_numbered = buffer.tag_table().lookup("list-numbered");
+        let kind = line_kind_from_tags(&line_start, list_bullet.as_ref(), list_numbered.as_ref());
+        let mut line_end = line_start.clone();
+        if !line_end.ends_line() {
+            line_end.forward_to_line_end();
+        }
+        let text = buffer.text(&line_start, &line_end, false);
+        list_prefix_chars(&text, kind) as i32
+    }
+
+    fn toggle_list_kind(buffer: &gtk::TextBuffer, want: LineKind) -> bool {
+        let (start_line, end_line) = selection_line_span(buffer);
 
         let list_bullet = buffer.tag_table().lookup("list-bullet");
         let list_numbered = buffer.tag_table().lookup("list-numbered");
