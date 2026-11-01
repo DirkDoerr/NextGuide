@@ -4,7 +4,7 @@
 
 **Blocked by:** 02 Undo and Redo on the toolbar, 03 Formatting controls on the toolbar, 04 Structure controls on the toolbar
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] The header of separate Edit, Format, and Tree menus is gone
 - [ ] The toolbar is a single row in the agreed group order, with gaps between groups
