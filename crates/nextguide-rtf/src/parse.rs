@@ -53,8 +53,12 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
                     // List destination: capture bullet vs numbered, then skip the group.
                     list_kind = Some(p.peek_list_kind_in_group());
                     p.skip_group_from_inside(&mut depth)?;
-                } else if p.starts_with(b"\\*") || p.starts_with(b"\\pntext") {
-                    // Other destinations / list markers: skip.
+                } else if p.starts_with(b"\\fonttbl")
+                    || p.starts_with(b"\\*")
+                    || p.starts_with(b"\\pntext")
+                {
+                    // Font table / destinations / list markers: skip (font names must not
+                    // become Run text).
                     p.skip_group_from_inside(&mut depth)?;
                 }
             }
@@ -342,7 +346,16 @@ fn strip_controls_rough(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'{' | b'}' => i += 1,
+            b'{' => {
+                // Skip fonttbl / ignorable destinations so font names never dominate fallback.
+                let rest = &bytes[i + 1..];
+                if rest.starts_with(b"\\fonttbl") || rest.starts_with(b"\\*") {
+                    i = skip_braced_group(bytes, i);
+                    continue;
+                }
+                i += 1;
+            }
+            b'}' => i += 1,
             b'\\' => {
                 i += 1;
                 if i < bytes.len() && bytes[i] == b'\'' {
@@ -376,4 +389,34 @@ fn strip_controls_rough(s: &str) -> String {
         }
     }
     out
+}
+
+/// Advance past a `{…}` group starting at `open` (index of `{`). Returns index after `}`.
+fn skip_braced_group(bytes: &[u8], open: usize) -> usize {
+    let mut depth = 0i32;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                i += 1;
+                if depth == 0 {
+                    return i;
+                }
+            }
+            b'\\' => {
+                // Keep brace depth correct inside skipped groups (\{ \} \\).
+                i += 1;
+                if i < bytes.len() {
+                    i += 1;
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    i
 }

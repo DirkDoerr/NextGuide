@@ -134,12 +134,24 @@ mod tests {
         assert_eq!(again.blocks[1].runs()[0].text, "two");
     }
 
+    fn all_run_text(doc: &Document) -> String {
+        doc.blocks
+            .iter()
+            .flat_map(|b| b.runs().iter().map(|r| r.text.as_str()))
+            .collect()
+    }
+
     #[test]
     fn load_guide_style_empty_paragraph_body() {
         let sample = b"{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}}\r\n{\\*\\generator Msftedit 5.41.21.2500;}\\viewkind4\\uc1\\pard\\lang1031\\fs18\\par\r\n}\r\n";
         match load(sample) {
             LoadBody::Editable(doc) => {
                 assert!(!doc.blocks.is_empty());
+                let text = all_run_text(&doc);
+                assert!(
+                    !text.contains("Arial") && !text.contains(';'),
+                    "fonttbl must not leak into empty body runs: {text:?}"
+                );
             }
             LoadBody::Unparseable { plain_fallback } => {
                 panic!("expected editable, got soft-fail {plain_fallback:?}");
@@ -155,6 +167,24 @@ mod tests {
         };
         let runs = doc.blocks[0].runs();
         assert!(runs.iter().any(|r| r.text.contains("Hello") && r.style.bold));
+        let text = all_run_text(&doc);
+        assert!(
+            !text.contains("Arial") && text == "Hello",
+            "fonttbl must not leak before body text: {text:?}"
+        );
+    }
+
+    #[test]
+    fn load_guide_fonttbl_does_not_leak_arial_into_runs() {
+        // The Guide–shaped header: font table + real content.
+        let sample = b"{\\rtf1\\ansi\\ansicpg1252\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}}\r\n\\pard\\f0\\fs18 Hello\\par\r\n}\r\n";
+        let LoadBody::Editable(doc) = load(sample) else {
+            panic!("expected editable");
+        };
+        let text = all_run_text(&doc);
+        assert_eq!(text, "Hello");
+        assert!(!text.contains("Arial"));
+        assert!(!text.contains(';'));
     }
 
     #[test]
@@ -164,6 +194,23 @@ mod tests {
                 assert!(plain_fallback.contains("not rtf"));
             }
             LoadBody::Editable(_) => panic!("should soft-fail"),
+        }
+    }
+
+    #[test]
+    fn soft_fail_strip_drops_fonttbl_names() {
+        // Not a well-formed `{\rtf…}` document, so load soft-fails; fallback must
+        // still strip fonttbl destinations rather than promote "Arial;" as content.
+        let sample = "{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}}Hello";
+        match load(sample.as_bytes()) {
+            LoadBody::Unparseable { plain_fallback } => {
+                assert!(
+                    !plain_fallback.contains("Arial"),
+                    "fonttbl name leaked into fallback: {plain_fallback:?}"
+                );
+                assert!(plain_fallback.contains("Hello"));
+            }
+            LoadBody::Editable(_) => panic!("expected soft-fail for non-rtf wrapper"),
         }
     }
 

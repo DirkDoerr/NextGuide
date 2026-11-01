@@ -201,6 +201,28 @@ fn body_view_shows_guide_node_text() {
 }
 
 #[test]
+fn import_sample_bodies_do_not_leak_fonttbl_arial() {
+    let doc = EditorDoc::open(repo_data("ImportSample.gde")).expect("open");
+    fn walk(doc: &EditorDoc, path: &NodePath) {
+        let view = doc.body_view(path).expect("body");
+        assert!(
+            !view.display_text.contains("Arial"),
+            "fonttbl leaked at {path}: {:?}",
+            view.display_text
+        );
+        let node = doc.guide().node(path).expect("node");
+        for i in 0..node.children().len() {
+            walk(doc, &path.child(i));
+        }
+    }
+    let root = NodePath::root();
+    let dummy = doc.guide().node(&root).expect("dummy");
+    for i in 0..dummy.children().len() {
+        walk(&doc, &root.child(i));
+    }
+}
+
+#[test]
 fn save_unchanged_keeps_structural_round_trip_and_rtf_bytes() {
     let src = repo_data("ImportSample.gde");
     let original = std::fs::read(&src).unwrap();
