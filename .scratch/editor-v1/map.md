@@ -43,6 +43,7 @@ A buildable product **spec** for **Editor v1**: a cross-platform desktop editor 
 - [Document session model](issues/19-document-session-model.md): New/Open/Save As + dirty Save/Discard/Cancel; Untitled title; RecentFiles (5); `launch_path_from_args` / bare New
 - [Undo/redo](issues/20-undo-redo.md): Two stacks — GTK body (irreversible fill on selection) + `EditorDoc` tree/title history (cap 50); Edit menu / shortcuts follow focus
 - [Win/macOS release bundles](issues/21-win-macos-release-bundles.md): `packaging/` scripts — macOS `.app`+DMG (`dylibbundler` GTK) and Windows NSIS (MSYS2 GTK DLL tree); `nextguide-cli` in both; manual updates; signing optional; Linux installers deferred
+- [Window focus on launch](issues/24-window-focus-on-launch.md): idle `present()` + macOS AppKit activate for terminal launches; Windows/Linux via `present()`
 
 ## Not yet specified
 

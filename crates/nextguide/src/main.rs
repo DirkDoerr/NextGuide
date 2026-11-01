@@ -1,5 +1,8 @@
 //! NextGuide Editor v1 — Relm4 / GTK4 two-pane shell.
 
+#[cfg(all(feature = "ui", target_os = "macos"))]
+mod macos_focus;
+
 #[cfg(feature = "ui")]
 mod ui {
     use std::cell::Cell;
@@ -568,6 +571,14 @@ mod ui {
             if let Some(path) = init {
                 sender.input(Msg::Opened(path));
             }
+
+            // Terminal launches leave the process backgrounded on macOS (and
+            // occasionally elsewhere). Present + platform activate once the
+            // event loop is running and the window can become key.
+            let launch_window = root.clone();
+            glib::idle_add_local_once(move || {
+                bring_main_window_forward(&launch_window);
+            });
 
             ComponentParts { model, widgets }
         }
@@ -1973,6 +1984,13 @@ mod ui {
     pub fn run(initial_path: Option<PathBuf>) {
         let app = RelmApp::new(APP_ID);
         app.run::<AppModel>(initial_path);
+    }
+
+    /// Raise the main window and activate the process for terminal launches.
+    fn bring_main_window_forward(window: &impl IsA<gtk::Window>) {
+        window.present();
+        #[cfg(target_os = "macos")]
+        crate::macos_focus::activate_running_app();
     }
 }
 
