@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 File menu and Save on the toolbar
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Bold, italic, underline, bullet list, and numbered list are icon buttons; family and size are dropdowns
 - [ ] The family dropdown offers Arial and System Sans; the size dropdown offers 9, 10, 11, 12, 14, 18, and 24

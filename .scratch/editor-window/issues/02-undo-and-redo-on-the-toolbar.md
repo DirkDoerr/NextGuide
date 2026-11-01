@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 File menu and Save on the toolbar
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Undo and Redo are icon buttons on the toolbar, in that order, after Save
 - [ ] Undo is grey when the focused pane’s undo stack is empty; Redo is grey when that pane’s redo stack is empty

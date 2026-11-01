@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 File menu and Save on the toolbar
 
-**Status:** ready-for-agent
+**Status:** claimed
 
 - [ ] Insert Child and Insert Sibling show the standard add symbol and the words Insert Child and Insert Sibling
 - [ ] Delete, Move Up, Move Down, Indent, and Outdent are icon buttons
