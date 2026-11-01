@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Editor v1 — Core-model Guide editor (GTK)
 
