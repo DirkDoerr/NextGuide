@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use nextguide_gde::{Guide, Result};
 
-pub use presentation::{present, ActionOutcome, EditorSnapshot, Presentation};
+pub use presentation::{present, ActionOutcome, EditorSnapshot, FocusedPane, Presentation};
 pub use recent::{RecentFiles, RECENT_LIMIT};
 pub use session::{
     body_view, body_view_from_rtf, visible_tree, BodyView, EditorDoc, TreeRow, TREE_UNDO_LIMIT,

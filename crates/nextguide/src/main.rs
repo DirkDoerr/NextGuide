@@ -15,7 +15,8 @@ mod ui {
     };
     use nextguide::{
         default_recent_store_path, needs_dirty_prompt, present, window_title_for_path,
-        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, RecentFiles, TreeRow, APP_ID,
+        ActionOutcome, DirtyPromptChoice, EditorDoc, EditorSnapshot, FocusedPane, RecentFiles,
+        TreeRow, APP_ID,
         UNDO_DEPTH_LIMIT,
     };
     use relm4::gtk;
@@ -35,7 +36,7 @@ mod ui {
         Quit,
     }
 
-    /// Which undo stack Edit → Undo/Redo and shortcuts target.
+    /// Which undo stack toolbar Undo/Redo and shortcuts target.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum FocusPane {
         Tree,
@@ -63,6 +64,8 @@ mod ui {
         file_popover: gtk::Popover,
         recent_popover: gtk::Popover,
         save_button: gtk::Button,
+        undo_button: gtk::Button,
+        redo_button: gtk::Button,
     }
 
     #[derive(Debug)]
@@ -132,8 +135,9 @@ mod ui {
                     set_orientation: gtk::Orientation::Vertical,
 
                     // Toolbar under the operating-system title bar. File starts the
-                    // row; Save is an icon beside it. Edit, Format, and Tree stay
-                    // reachable here until their own tickets move those commands.
+                    // row; Save, Undo, and Redo are icons beside it, in that order.
+                    // Format and Tree stay reachable here until their own tickets
+                    // move those commands.
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
                         set_spacing: 6,
@@ -207,27 +211,25 @@ mod ui {
                                 connect_clicked => Msg::Save,
                             },
                         },
-                        gtk::MenuButton {
-                            set_label: "Edit",
-                            set_always_show_arrow: false,
-                            #[wrap(Some)]
-                            set_popover = &gtk::Popover {
-                                gtk::Box {
-                                    set_orientation: gtk::Orientation::Vertical,
-                                    set_spacing: 2,
-                                    set_margin_all: 6,
-
-                                    gtk::Button {
-                                        set_label: "Undo",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::Undo,
-                                    },
-                                    gtk::Button {
-                                        set_label: "Redo",
-                                        set_has_frame: false,
-                                        connect_clicked => Msg::Redo,
-                                    },
-                                },
+                        // Parent tooltips stay visible when an icon is grey.
+                        gtk::Box {
+                            set_tooltip_text: Some("Undo (Ctrl+Z)"),
+                            #[name = "undo_button"]
+                            gtk::Button {
+                                set_icon_name: "edit-undo-symbolic",
+                                set_tooltip_text: Some("Undo (Ctrl+Z)"),
+                                set_focus_on_click: false,
+                                connect_clicked => Msg::Undo,
+                            },
+                        },
+                        gtk::Box {
+                            set_tooltip_text: Some("Redo (Ctrl+Shift+Z, Ctrl+Y)"),
+                            #[name = "redo_button"]
+                            gtk::Button {
+                                set_icon_name: "edit-redo-symbolic",
+                                set_tooltip_text: Some("Redo (Ctrl+Shift+Z, Ctrl+Y)"),
+                                set_focus_on_click: false,
+                                connect_clicked => Msg::Redo,
                             },
                         },
                         gtk::MenuButton {
@@ -510,6 +512,8 @@ mod ui {
                 file_popover: gtk::Popover::new(),
                 recent_popover: gtk::Popover::new(),
                 save_button: gtk::Button::new(),
+                undo_button: gtk::Button::new(),
+                redo_button: gtk::Button::new(),
             };
 
             let widgets = view_output!();
@@ -539,6 +543,8 @@ mod ui {
             let file_popover = widgets.file_popover.clone();
             let recent_popover = widgets.recent_popover.clone();
             let save_button = widgets.save_button.clone();
+            let undo_button = widgets.undo_button.clone();
+            let redo_button = widgets.redo_button.clone();
 
             // Body-local format shortcuts: B/I/U and list toggles.
             let key = gtk::EventControllerKey::new();
@@ -584,7 +590,7 @@ mod ui {
             });
             body_view.add_controller(body_focus);
 
-            // Window-level File + Undo/Redo shortcuts (Edit stack follows focus_pane).
+            // Window-level File + Undo/Redo shortcuts (stack follows focus_pane).
             let app_keys = gtk::EventControllerKey::new();
             let app_sender = sender.clone();
             app_keys.connect_key_pressed(move |_, keyval, _keycode, mods| {
@@ -640,11 +646,13 @@ mod ui {
                 file_popover,
                 recent_popover,
                 save_button,
+                undo_button,
+                redo_button,
                 ..model
             };
             model.rebuild_recent_menu(&sender);
-            model.refresh_title(&widgets);
             model.show_unselected_body();
+            model.refresh_title(&widgets);
 
             if let Some(path) = init {
                 sender.input(Msg::Opened(path));
@@ -867,6 +875,7 @@ mod ui {
                     self.selected = None;
                     self.body_dirty = false;
                     self.show_unselected_body();
+                    self.refresh_title(widgets);
                 }
                 Msg::TitleEdited { path, title } => {
                     self.focus_pane = FocusPane::Tree;
@@ -894,6 +903,8 @@ mod ui {
                 }
                 Msg::FocusPane(pane) => {
                     self.focus_pane = pane;
+                    // Undo and Redo follow the pane that was focused before the click.
+                    self.refresh_title(widgets);
                 }
                 Msg::Undo => {
                     self.run_undo(widgets);
@@ -1127,7 +1138,7 @@ mod ui {
                 FocusPane::Body => {
                     if self.body_buffer.can_undo() {
                         self.body_buffer.undo();
-                        self.status = "Body undo".into();
+                        self.publish_outcome(ActionOutcome::Success);
                         self.refresh_title(widgets);
                     } else {
                         self.status = "Nothing to undo in the body".into();
@@ -1145,7 +1156,7 @@ mod ui {
                         self.status = "Nothing to undo in the tree".into();
                         return;
                     }
-                    self.after_tree_history(widgets, "Tree undo");
+                    self.after_tree_history(widgets);
                 }
             }
         }
@@ -1155,7 +1166,7 @@ mod ui {
                 FocusPane::Body => {
                     if self.body_buffer.can_redo() {
                         self.body_buffer.redo();
-                        self.status = "Body redo".into();
+                        self.publish_outcome(ActionOutcome::Success);
                         self.refresh_title(widgets);
                     } else {
                         self.status = "Nothing to redo in the body".into();
@@ -1171,13 +1182,15 @@ mod ui {
                         self.status = "Nothing to redo in the tree".into();
                         return;
                     }
-                    self.after_tree_history(widgets, "Tree redo");
+                    self.after_tree_history(widgets);
                 }
             }
         }
 
         /// Refresh UI after an app-level tree/title undo or redo.
-        fn after_tree_history(&mut self, widgets: &AppModelWidgets, status: &str) {
+        ///
+        /// A successful undo or redo publishes no bottom-line sentence.
+        fn after_tree_history(&mut self, widgets: &AppModelWidgets) {
             let selected = self.selected.clone();
             let Some(doc) = self.doc.as_ref() else {
                 return;
@@ -1196,7 +1209,7 @@ mod ui {
                     self.tree_view.selection().unselect_all();
                 }
             }
-            self.status = status.into();
+            self.publish_outcome(ActionOutcome::Success);
             self.refresh_title(widgets);
         }
 
@@ -1271,6 +1284,22 @@ mod ui {
                     .as_ref()
                     .map(|doc| !doc.visible_tree().is_empty())
                     .unwrap_or(false),
+                focused_pane: match self.focus_pane {
+                    FocusPane::Tree => FocusedPane::Tree,
+                    FocusPane::Body => FocusedPane::Body,
+                },
+                body_undo_empty: !self.body_buffer.can_undo(),
+                tree_undo_empty: self
+                    .doc
+                    .as_ref()
+                    .map(|doc| !doc.can_undo_tree())
+                    .unwrap_or(true),
+                body_redo_empty: !self.body_buffer.can_redo(),
+                tree_redo_empty: self
+                    .doc
+                    .as_ref()
+                    .map(|doc| !doc.can_redo_tree())
+                    .unwrap_or(true),
             }
         }
 
@@ -1281,6 +1310,8 @@ mod ui {
             widgets.main_window.set_title(Some(&title));
             let presented = present(&self.editor_snapshot(), None);
             self.save_button.set_sensitive(presented.save_enabled);
+            self.undo_button.set_sensitive(presented.undo_enabled);
+            self.redo_button.set_sensitive(presented.redo_enabled);
         }
 
         /// Publish a bottom-line sentence only when presentation says the action failed.
