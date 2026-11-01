@@ -210,6 +210,18 @@ fn import_sample_bodies_do_not_leak_fonttbl_arial() {
             "fonttbl leaked at {path}: {:?}",
             view.display_text
         );
+        // The fonttbl entry ends in `;`; it must not survive as body text either.
+        assert!(
+            !view.display_text.contains(';'),
+            "fonttbl `;` leaked at {path}: {:?}",
+            view.display_text
+        );
+        // The fonttbl entry ends in `;`; it must not survive as body text either.
+        assert!(
+            !view.display_text.contains(';'),
+            "fonttbl `;` leaked at {path}: {:?}",
+            view.display_text
+        );
         let node = doc.guide().node(path).expect("node");
         for i in 0..node.children().len() {
             walk(doc, &path.child(i));

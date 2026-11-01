@@ -188,6 +188,16 @@ mod tests {
     }
 
     #[test]
+    fn load_colortbl_semicolons_do_not_leak_into_runs() {
+        // The Guide writes `{\colortbl ;\red0…;}` whose entries are `;`-terminated.
+        let sample = b"{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}}\r\n{\\colortbl ;\\red0\\green0\\blue255;\\red255\\green255\\blue255;}\r\n\\pard\\cf1 Hello\\par\r\n}\r\n";
+        let LoadBody::Editable(doc) = load(sample) else {
+            panic!("expected editable");
+        };
+        assert_eq!(all_run_text(&doc), "Hello");
+    }
+
+    #[test]
     fn unparseable_soft_fails_with_plain_fallback() {
         match load(b"not rtf at all") {
             LoadBody::Unparseable { plain_fallback } => {
@@ -261,6 +271,18 @@ mod tests {
         assert_eq!(style.family, FontFamily::Arial);
         assert_eq!(style.size.pt(), 9);
         assert_eq!(style.size.half_points(), 18);
+    }
+
+    #[test]
+    fn sans_label_says_it_is_the_system_face() {
+        assert_eq!(FontFamily::Arial.label(), "Arial");
+        assert_eq!(FontFamily::Sans.label(), "System Sans");
+    }
+
+    #[test]
+    fn font_size_all_mirrors_allowed_pt() {
+        let pts: Vec<u8> = FontSize::ALL.iter().map(|s| s.pt()).collect();
+        assert_eq!(pts, FontSize::ALLOWED_PT);
     }
 
     #[test]

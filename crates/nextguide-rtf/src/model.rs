@@ -81,7 +81,7 @@ impl FontFamily {
     pub fn label(self) -> &'static str {
         match self {
             FontFamily::Arial => "Arial",
-            FontFamily::Sans => "Sans",
+            FontFamily::Sans => "System Sans",
         }
     }
 }
@@ -96,6 +96,17 @@ impl FontSize {
 
     /// Default size (9 pt, i.e. The Guide's common `\fs18`).
     pub const DEFAULT: FontSize = FontSize(9);
+
+    /// Every size offered in the Format UI, ascending (same order as [`Self::ALLOWED_PT`]).
+    pub const ALL: [FontSize; 7] = [
+        FontSize(9),
+        FontSize(10),
+        FontSize(11),
+        FontSize(12),
+        FontSize(14),
+        FontSize(18),
+        FontSize(24),
+    ];
 
     /// Size for an allowed point value, or `None` if `pt` is not in the set.
     pub fn from_pt(pt: u8) -> Option<FontSize> {

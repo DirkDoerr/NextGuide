@@ -64,8 +64,11 @@ fn parse_document(input: &str) -> Result<Document, ParseError> {
                     // Font table: record index -> face for `\fN`; names never become Run text.
                     p.read_fonttbl(&mut depth, &mut fonts)?;
                     apply_default_font(&mut style, &fonts, default_font);
-                } else if p.starts_with(b"\\*") || p.starts_with(b"\\pntext") {
-                    // Destinations / list markers: skip.
+                } else if p.starts_with(b"\\*")
+                    || p.starts_with(b"\\pntext")
+                    || p.starts_with(b"\\colortbl")
+                {
+                    // Destinations / list markers (colour table entries end in `;`): skip.
                     p.skip_group_from_inside(&mut depth)?;
                 } else {
                     style_stack.push(style);
@@ -455,7 +458,10 @@ fn strip_controls_rough(s: &str) -> String {
             b'{' => {
                 // Skip fonttbl / ignorable destinations so font names never dominate fallback.
                 let rest = &bytes[i + 1..];
-                if rest.starts_with(b"\\fonttbl") || rest.starts_with(b"\\*") {
+                if rest.starts_with(b"\\fonttbl")
+                    || rest.starts_with(b"\\colortbl")
+                    || rest.starts_with(b"\\*")
+                {
                     i = skip_braced_group(bytes, i);
                     continue;
                 }

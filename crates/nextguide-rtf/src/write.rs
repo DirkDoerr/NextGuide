@@ -56,7 +56,7 @@ fn write_runs(out: &mut String, runs: &[Run]) {
     let mut cur = SpanStyle::default();
     out.push_str(&format!(
         "\\f{}\\fs{} ",
-        font_index(cur.family),
+        rtf_font_number(cur.family),
         cur.size.half_points()
     ));
     for run in runs {
@@ -67,7 +67,8 @@ fn write_runs(out: &mut String, runs: &[Run]) {
     emit_style_delta(out, cur, SpanStyle::default());
 }
 
-fn font_index(family: FontFamily) -> u8 {
+/// The `\fN` number of `family` in the `\fonttbl` this writer emits.
+fn rtf_font_number(family: FontFamily) -> u8 {
     match family {
         FontFamily::Arial => 0,
         FontFamily::Sans => 1,
@@ -76,7 +77,7 @@ fn font_index(family: FontFamily) -> u8 {
 
 fn emit_style_delta(out: &mut String, from: SpanStyle, to: SpanStyle) {
     if from.family != to.family {
-        out.push_str(&format!("\\f{} ", font_index(to.family)));
+        out.push_str(&format!("\\f{} ", rtf_font_number(to.family)));
     }
     if from.size != to.size {
         out.push_str(&format!("\\fs{} ", to.size.half_points()));
