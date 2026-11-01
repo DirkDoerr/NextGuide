@@ -1,4 +1,4 @@
-Status: ready-for-agent
+Status: done
 
 # Editor window — toolbar and pane presentation
 
