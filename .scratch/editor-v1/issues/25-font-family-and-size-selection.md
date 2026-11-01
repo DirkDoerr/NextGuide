@@ -1,7 +1,7 @@
 # 25: Font family and size selection
 
 **Category:** enhancement  
-**Status:** ready-for-agent  
+**Status:** claimed  
 **Blocked by:** 22 — Font table leak (Arial / `;` as body text)
 
 ## Problem
