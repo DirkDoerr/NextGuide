@@ -1,16 +1,16 @@
 # NextGuide
 
-A hierarchical tree based note taking SW.
+A hierarchical tree-based note-taking app for Windows, macOS, and Linux (mobile later).
 
-This application is based on the project:
-
-https://theguide.sourceforge.net/
-
-in terms of functionality and allowing to read/write the same file format.
-
-It targets Windows, MacOS and Linux. Optionally Android and iOS.
+NextGuide is an **independent, greenfield** implementation. It aims for the same **outliner functionality** as [The Guide](https://theguide.sourceforge.net/) and **reads/writes The Guide v2 `.gde` format**. It is **not** a fork of The Guide and does **not** ship adapted `libguide` (see [ADR-0001](docs/adr/0001-greenfield-gde-codec.md)).
 
 It is also an exercise in building with AI.
+
+## License
+
+- **NextGuide** (this repository): [MIT](LICENSE)
+- **The Guide** (format reference / product we interoperate with): Apache-2.0 — not redistributed here
+- **GTK** (bundled with Windows/macOS Editor installers): LGPL — dynamically linked; see [packaging/README.md](packaging/README.md#lgpl-gtk-when-shipping-installers)
 
 ## Format v1
 

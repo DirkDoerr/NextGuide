@@ -103,6 +103,15 @@ There is **no in-app auto-updater** in Editor v1. Publish installers on GitHub R
 
 Deferred. Developers run against distro GTK (`libgtk-4-dev` / equivalent). No `.deb` / AppImage / Flatpak in this wave.
 
-## LGPL note
+## LGPL (GTK) when shipping installers
 
-GTK is LGPL and is **dynamically linked** and redistributed as separate shared libraries inside the bundle. Keep source offer obligations in mind for formal releases (GTK / GLib / Pango / etc.).
+NextGuide itself is **MIT**. The Windows/macOS bundles also redistribute **GTK and related libraries** (GLib, Pango, GdkPixbuf, HarfBuzz, …), which are **LGPL**. That is compatible with a MIT app when you follow the usual dynamic-link pattern — it does **not** force NextGuide to become LGPL.
+
+### How this repo stays compliant
+
+1. **Dynamic link only** — `nextguide` loads GTK as separate shared libraries (`.dylib` / `.dll`). Do **not** statically link GTK into the binary.
+2. **Ship libraries as replaceable files** — packaging scripts already put GTK under `Contents/Frameworks` (macOS) or beside the exe (Windows), so a user can swap in a modified LGPL build.
+3. **Keep MIT and LGPL notices in the release** — include this repo’s `LICENSE` plus LGPL copyright/license text for the bundled GTK stack (or a short `THIRD_PARTY_NOTICES` that points at them).
+4. **Source offer for formal releases** — for each published installer that includes GTK, state where recipients can get corresponding source for the exact LGPL versions you shipped (Homebrew/MSYS2 package versions, upstream tarballs, or a mirror you host). Distro/package URLs are fine if they match what you bundled.
+
+Early unsigned/ad-hoc builds may still be incomplete on notices; close the notice + source-offer checklist before calling a release “formal.”

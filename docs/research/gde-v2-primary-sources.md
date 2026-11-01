@@ -120,7 +120,7 @@ Unknown attributes must be skipped by length (`guide_load_v2` default branch). F
 |------|------|------|---------|
 | Sample fixture | `data/ImportSample.gde` | Binary v2 sample; header begins `47 44 45 02 00 00 00` (`GDE` + version 2); contains UTF-8 titles and RTF bodies (e.g. `Page1`, `Child1`, `{\rtf1\ansi...`) | Repo **MIT** (`LICENSE`); fixture content is user/sample data, not The Guide sources |
 | Domain language | `GLOSSARY.md` | Defines Core model / Format v1 / Round-trip terms | MIT |
-| Product README | `README.md` | States intent to read/write the same format as The Guide | MIT |
+| Product README | `README.md` | States NextGuide is greenfield / format-compatible with The Guide (not a fork) | MIT |
 | Greenfield codec ADR | `docs/adr/0001-greenfield-gde-codec.md` | Decided: do not adapt `libguide` as the Format v1 implementation | MIT |
 
 No other `.gde` samples or format docs currently live in this repo.
