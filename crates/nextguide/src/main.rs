@@ -144,20 +144,23 @@ mod ui {
                 gtk::Box {
                     set_orientation: gtk::Orientation::Vertical,
 
-                    // Toolbar under the operating-system title bar. File starts the
-                    // row; Save, Undo, and Redo are icons beside it.
-                    // Formatting controls follow. Structure commands follow those.
+                    // One row under the operating-system title bar. Groups, in order:
+                    // File, Save, undo/redo, bold/italic/underline, lists, family and
+                    // size, insert/delete, move/indent. The stylesheet separates groups.
+                    #[name = "toolbar"]
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 6,
+                        set_spacing: 0,
                         set_margin_top: 4,
                         set_margin_bottom: 4,
                         set_margin_start: 6,
                         set_margin_end: 6,
 
                         gtk::MenuButton {
+                            add_css_class: "ng-tool-group",
                             set_label: "File",
                             set_always_show_arrow: false,
+                            set_focus_on_click: false,
                             #[wrap(Some)]
                             #[name = "file_popover"]
                             set_popover = &gtk::Popover {
@@ -211,6 +214,7 @@ mod ui {
                             },
                         },
                         gtk::Box {
+                            add_css_class: "ng-tool-group",
                             set_tooltip_text: Some("Save (Ctrl+S)"),
                             #[name = "save_button"]
                             gtk::Button {
@@ -222,35 +226,52 @@ mod ui {
                         },
                         // Parent tooltips stay visible when an icon is grey.
                         gtk::Box {
-                            set_tooltip_text: Some("Undo (Ctrl+Z)"),
-                            #[name = "undo_button"]
-                            gtk::Button {
-                                set_icon_name: "edit-undo-symbolic",
+                            add_css_class: "ng-tool-group",
+                            set_spacing: 4,
+
+                            gtk::Box {
                                 set_tooltip_text: Some("Undo (Ctrl+Z)"),
-                                set_focus_on_click: false,
-                                connect_clicked => Msg::Undo,
+                                #[name = "undo_button"]
+                                gtk::Button {
+                                    set_icon_name: "edit-undo-symbolic",
+                                    set_tooltip_text: Some("Undo (Ctrl+Z)"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::Undo,
+                                },
                             },
-                        },
-                        gtk::Box {
-                            set_tooltip_text: Some("Redo (Ctrl+Shift+Z, Ctrl+Y)"),
-                            #[name = "redo_button"]
-                            gtk::Button {
-                                set_icon_name: "edit-redo-symbolic",
+                            gtk::Box {
                                 set_tooltip_text: Some("Redo (Ctrl+Shift+Z, Ctrl+Y)"),
-                                set_focus_on_click: false,
-                                connect_clicked => Msg::Redo,
+                                #[name = "redo_button"]
+                                gtk::Button {
+                                    set_icon_name: "edit-redo-symbolic",
+                                    set_tooltip_text: Some("Redo (Ctrl+Shift+Z, Ctrl+Y)"),
+                                    set_focus_on_click: false,
+                                    connect_clicked => Msg::Redo,
+                                },
                             },
                         },
-                        #[name = "formatting_box"]
+                        #[name = "character_group"]
                         gtk::Box {
+                            add_css_class: "ng-tool-group",
                             set_orientation: gtk::Orientation::Horizontal,
-                            set_spacing: 0,
-                            set_margin_start: 12,
+                            set_spacing: 4,
                         },
+                        #[name = "list_group"]
                         gtk::Box {
+                            add_css_class: "ng-tool-group",
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 4,
+                        },
+                        #[name = "font_group"]
+                        gtk::Box {
+                            add_css_class: "ng-tool-group",
                             set_orientation: gtk::Orientation::Horizontal,
                             set_spacing: 6,
-                            set_margin_start: 12,
+                        },
+                        gtk::Box {
+                            add_css_class: "ng-tool-group",
+                            set_orientation: gtk::Orientation::Horizontal,
+                            set_spacing: 6,
 
                             gtk::Box {
                                 set_tooltip_text: Some("Insert Child"),
@@ -304,9 +325,9 @@ mod ui {
                             },
                         },
                         gtk::Box {
+                            add_css_class: "ng-tool-group",
                             set_orientation: gtk::Orientation::Horizontal,
-                            set_spacing: 6,
-                            set_margin_start: 12,
+                            set_spacing: 4,
 
                             gtk::Box {
                                 set_tooltip_text: Some("Move Up"),
@@ -380,10 +401,6 @@ mod ui {
                                 set_editable: false,
                                 set_cursor_visible: false,
                                 set_wrap_mode: gtk::WrapMode::Word,
-                                set_left_margin: 8,
-                                set_right_margin: 8,
-                                set_top_margin: 8,
-                                set_bottom_margin: 8,
                             },
                         },
                     },
@@ -406,6 +423,7 @@ mod ui {
             let tree_store =
                 gtk::TreeStore::new(&[glib::Type::STRING, glib::Type::STRING]);
             let tree_view = gtk::TreeView::new();
+            tree_view.add_css_class("ng-tree");
             tree_view.set_model(Some(&tree_store));
             tree_view.set_headers_visible(false);
             tree_view.set_enable_search(true);
@@ -541,13 +559,31 @@ mod ui {
 
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
-            // Untagged body text reads as the default face and size (Arial 9 pt).
+            // Padding and spacing only, plus the closed default face (Arial 9).
+            // No colors: tree selection stays the theme's own selected background.
             relm4::set_global_css(&format!(
-                ".ng-body {{ font-family: {}; font-size: {}pt; }}",
-                family_pango_name(FontFamily::default()),
-                FontSize::DEFAULT.pt()
+                "\
+treeview.ng-tree {{ padding-top: 6px; padding-bottom: 6px; }}
+textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}pt; }}
+.ng-tool-group + .ng-tool-group {{ margin-left: 12px; }}
+",
+                family = family_pango_name(FontFamily::default()),
+                size = FontSize::DEFAULT.pt(),
             ));
-            model.format_bar.attach(&widgets.formatting_box);
+            model.format_bar.attach(
+                &widgets.character_group,
+                &widgets.list_group,
+                &widgets.font_group,
+            );
+            // The row does not wrap. Its natural width is the window's minimum,
+            // so a resize cannot collapse a command into an overflow menu.
+            let (_, toolbar_natural, _, _) =
+                widgets.toolbar.measure(gtk::Orientation::Horizontal, -1);
+            let toolbar_width = toolbar_natural
+                + widgets.toolbar.margin_start()
+                + widgets.toolbar.margin_end();
+            widgets.toolbar.set_width_request(toolbar_natural);
+            widgets.main_window.set_width_request(toolbar_width);
             let body_view = widgets.body_view.clone();
             let recent_menu = widgets.recent_menu.clone();
             let file_popover = widgets.file_popover.clone();
@@ -1916,22 +1952,14 @@ mod ui {
             }
         }
 
-        fn attach(&self, bar: &gtk::Box) {
-            let characters = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        fn attach(&self, characters: &gtk::Box, lists: &gtk::Box, fonts: &gtk::Box) {
             characters.append(&self.bold);
             characters.append(&self.italic);
             characters.append(&self.underline);
-            let lists = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-            lists.set_margin_start(12);
             lists.append(&self.bullet);
             lists.append(&self.numbered);
-            let fonts = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            fonts.set_margin_start(12);
             fonts.append(&self.family);
             fonts.append(&self.size);
-            bar.append(&characters);
-            bar.append(&lists);
-            bar.append(&fonts);
         }
 
         fn sync(&self, controls: &FormattingControls) {
