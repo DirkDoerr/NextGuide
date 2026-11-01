@@ -1,6 +1,8 @@
 //! Editor window presentation. GTK-free: snapshots in, enablement and hints out.
 
-use nextguide::{present, ActionOutcome, EditorSnapshot, FormattingSnapshot, ListLineKind};
+use nextguide::{
+    present, ActionOutcome, EditorSnapshot, FocusedPane, FormattingSnapshot, ListLineKind,
+};
 use nextguide_rtf::{FontFamily, FontSize};
 
 #[test]
@@ -9,6 +11,11 @@ fn save_is_grey_when_the_guide_is_clean() {
         guide_open: true,
         dirty: false,
         has_nodes: false,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     assert!(!present(&snapshot, None).save_enabled);
@@ -21,6 +28,11 @@ fn save_is_available_when_the_guide_is_dirty_including_untitled() {
         guide_open: true,
         dirty: true,
         has_nodes: false,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     assert!(present(&snapshot, None).save_enabled);
@@ -32,6 +44,11 @@ fn empty_guide_shows_the_add_a_node_hint_in_the_body() {
         guide_open: true,
         dirty: false,
         has_nodes: false,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     assert_eq!(
@@ -46,6 +63,11 @@ fn guide_with_nodes_leaves_an_empty_body_blank() {
         guide_open: true,
         dirty: true,
         has_nodes: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     assert_eq!(present(&snapshot, None).empty_hint, None);
@@ -57,6 +79,11 @@ fn successful_save_publishes_no_status_sentence() {
         guide_open: true,
         dirty: true,
         has_nodes: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     let presentation = present(&snapshot, Some(ActionOutcome::Success));
@@ -69,6 +96,11 @@ fn failed_save_still_shows_the_failure_sentence() {
         guide_open: true,
         dirty: true,
         has_nodes: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     let presentation = present(
@@ -90,6 +122,11 @@ fn bold_is_grey_and_not_pressed_when_no_body_text_is_selected() {
         guide_open: true,
         dirty: false,
         has_nodes: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot {
             text_selected: false,
             all_bold: true,
@@ -108,6 +145,11 @@ fn bold_looks_pressed_only_when_the_whole_selection_is_bold() {
             guide_open: true,
             dirty: false,
             has_nodes: true,
+            focused_pane: FocusedPane::Tree,
+            body_undo_empty: true,
+            tree_undo_empty: true,
+            body_redo_empty: true,
+            tree_redo_empty: true,
             formatting: FormattingSnapshot {
                 text_selected: true,
                 all_bold: true,
@@ -126,6 +168,11 @@ fn bold_looks_pressed_only_when_the_whole_selection_is_bold() {
             guide_open: true,
             dirty: false,
             has_nodes: true,
+            focused_pane: FocusedPane::Tree,
+            body_undo_empty: true,
+            tree_undo_empty: true,
+            body_redo_empty: true,
+            tree_redo_empty: true,
             formatting: FormattingSnapshot {
                 text_selected: true,
                 all_bold: false,
@@ -489,8 +536,157 @@ fn open_guide(formatting: FormattingSnapshot) -> EditorSnapshot {
         guide_open: true,
         dirty: false,
         has_nodes: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting,
     }
+}
+
+#[test]
+fn undo_is_grey_when_the_body_panes_undo_stack_is_empty() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: false,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Body,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+    };
+    assert!(!present(&snapshot, None).undo_enabled);
+}
+
+#[test]
+fn undo_stays_grey_when_the_body_stack_is_empty_and_the_tree_stack_is_not() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: false,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Body,
+        body_undo_empty: true,
+        tree_undo_empty: false,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+    };
+    assert!(!present(&snapshot, None).undo_enabled);
+}
+
+#[test]
+fn undo_is_available_when_the_body_stack_has_a_step_and_the_tree_stack_is_empty() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: true,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Body,
+        body_undo_empty: false,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+    };
+    assert!(present(&snapshot, None).undo_enabled);
+}
+
+#[test]
+fn undo_is_grey_when_the_tree_stack_is_empty_and_the_body_stack_is_not() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: true,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: false,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+    };
+    assert!(!present(&snapshot, None).undo_enabled);
+}
+
+#[test]
+fn undo_is_available_when_the_tree_stack_has_a_step_and_the_body_stack_is_empty() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: false,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: false,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+    };
+    assert!(present(&snapshot, None).undo_enabled);
+}
+
+#[test]
+fn redo_stays_grey_when_the_body_stack_is_empty_and_the_tree_stack_is_not() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: false,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Body,
+        body_undo_empty: false,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: false,
+    };
+    assert!(!present(&snapshot, None).redo_enabled);
+}
+
+#[test]
+fn redo_is_available_when_the_body_stack_has_a_step_and_the_tree_stack_is_empty() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: true,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Body,
+        body_undo_empty: true,
+        tree_undo_empty: false,
+        body_redo_empty: false,
+        tree_redo_empty: true,
+    };
+    assert!(present(&snapshot, None).redo_enabled);
+}
+
+#[test]
+fn redo_is_grey_when_the_tree_stack_is_empty_and_the_body_stack_is_not() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: true,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: false,
+        body_redo_empty: false,
+        tree_redo_empty: true,
+    };
+    assert!(!present(&snapshot, None).redo_enabled);
+}
+
+#[test]
+fn redo_is_available_when_the_tree_stack_has_a_step_and_the_body_stack_is_empty() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: false,
+        has_nodes: true,
+        formatting: FormattingSnapshot::default(),
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: false,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: false,
+    };
+    assert!(present(&snapshot, None).redo_enabled);
 }
 
 #[test]
@@ -499,6 +695,11 @@ fn save_with_no_guide_says_nothing_to_save() {
         guide_open: false,
         dirty: false,
         has_nodes: false,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
         formatting: FormattingSnapshot::default(),
     };
     let presentation = present(&snapshot, Some(ActionOutcome::NothingToSave));

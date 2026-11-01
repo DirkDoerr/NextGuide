@@ -3,6 +3,15 @@
 
 use nextguide_rtf::{FontFamily, FontSize};
 
+/// Pane whose undo and redo stacks the toolbar is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocusedPane {
+    /// Tree and title history.
+    Tree,
+    /// Body buffer history.
+    Body,
+}
+
 /// Facts the shell has already read from the open Guide. No widget types.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorSnapshot {
@@ -12,6 +21,16 @@ pub struct EditorSnapshot {
     pub dirty: bool,
     /// At least one visible Node. The Dummy root does not count.
     pub has_nodes: bool,
+    /// Pane focused before a toolbar click. Undo and Redo read this pane’s stacks.
+    pub focused_pane: FocusedPane,
+    /// The body pane’s undo stack has no steps.
+    pub body_undo_empty: bool,
+    /// The tree pane’s undo stack has no steps.
+    pub tree_undo_empty: bool,
+    /// The body pane’s redo stack has no steps.
+    pub body_redo_empty: bool,
+    /// The tree pane’s redo stack has no steps.
+    pub tree_redo_empty: bool,
     /// Body-selection facts for the formatting controls.
     pub formatting: FormattingSnapshot,
 }
@@ -53,6 +72,10 @@ pub struct FormattingSnapshot {
 pub struct Presentation {
     /// Save can be activated. Grey when false.
     pub save_enabled: bool,
+    /// Undo can be activated. Grey when the focused pane’s undo stack is empty.
+    pub undo_enabled: bool,
+    /// Redo can be activated. Grey when the focused pane’s redo stack is empty.
+    pub redo_enabled: bool,
     /// Body text when the Guide has no Nodes. `None` leaves any other empty body blank.
     pub empty_hint: Option<&'static str>,
     /// Bottom-line sentence to publish. `None` leaves the line unchanged.
@@ -119,14 +142,23 @@ pub enum ActionOutcome {
     Formatted,
 }
 
-/// Decide Save’s enabled state, the empty-Guide hint, and the bottom line.
+/// Decide Save, Undo, and Redo enablement, the formatting controls, the empty-Guide
+/// hint, and the bottom line.
 ///
 /// Save is available only while an open Guide is dirty. An untitled Guide has
-/// no path; dirtiness alone makes Save available. A success publishes nothing.
+/// no path; dirtiness alone makes Save available. Undo and Redo each follow
+/// the focused pane’s own stack and ignore the other pane. Formatting controls
+/// follow the body-selection facts. A success publishes nothing.
 pub fn present(snapshot: &EditorSnapshot, outcome: Option<ActionOutcome>) -> Presentation {
     let text_selected = snapshot.formatting.text_selected;
+    let (undo_stack_empty, redo_stack_empty) = match snapshot.focused_pane {
+        FocusedPane::Body => (snapshot.body_undo_empty, snapshot.body_redo_empty),
+        FocusedPane::Tree => (snapshot.tree_undo_empty, snapshot.tree_redo_empty),
+    };
     Presentation {
         save_enabled: snapshot.guide_open && snapshot.dirty,
+        undo_enabled: !undo_stack_empty,
+        redo_enabled: !redo_stack_empty,
         empty_hint: if snapshot.guide_open && !snapshot.has_nodes {
             Some("Untitled Guide — add a Node to begin.")
         } else {
