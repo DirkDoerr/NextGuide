@@ -1,7 +1,7 @@
 # 25: Font family and size selection
 
 **Category:** enhancement  
-**Status:** ready-for-agent  
+**Status:** resolved  
 **Blocked by:** 22 — Font table leak (Arial / `;` as body text)
 
 ## Problem
@@ -37,14 +37,26 @@ Body formatting exposes bold/italic/underline and lists. `SpanStyle` (or equival
 - Save path: edited bodies emit subset RTF including face/size; untouched-byte policy unchanged.
 
 **Acceptance criteria:**
-- [ ] Ticket 22 is done (or this work assumes a clean load without `Arial;` text leaks)
-- [ ] UI can set family to Arial or Sans and size to one of 9/10/11/12/14/18/24 (default 9 for new typing as agreed)
-- [ ] Edited bodies Round-trip the chosen face+size through `nextguide-rtf` (library tests for at least one family and one size)
-- [ ] Untouched bodies remain byte-preserving when not edited
-- [ ] Existing B/I/U/list behaviour still works
+- [x] Ticket 22 is done (or this work assumes a clean load without `Arial;` text leaks)
+- [x] UI can set family to Arial or Sans and size to one of 9/10/11/12/14/18/24 (default 9 for new typing as agreed)
+- [x] Edited bodies Round-trip the chosen face+size through `nextguide-rtf` (library tests for at least one family and one size)
+- [x] Untouched bodies remain byte-preserving when not edited
+- [x] Existing B/I/U/list behaviour still works
 
 **Out of scope:**
 - Full system font picker / arbitrary faces
 - Colour, highlight, or other exotic RTF attributes
 - Perfect pixel match to Windows Arial metrics
 - Changing ticket 22’s bugfix beyond depending on it
+
+## Answer
+
+Edited Node bodies can now carry font family (Arial / Sans) and size (9, 10, 11, 12, 14, 18, 24 pt; default Arial 9) and Round-trip them through `nextguide-rtf`.
+
+- **Model:** `SpanStyle` gained `family: FontFamily` and `size: FontSize` (`Copy + Eq + Default` kept). `FontSize::ALLOWED_PT`, `from_pt`, `snap_half_points`, `half_points`; `FontFamily::ALL` / `label`.
+- **Writer:** emits `{\fonttbl{\f0\fnil\fcharset0 Arial;}{\f1\fswiss\fcharset0 Helvetica;}}`. Arial = `\f0` (Guide-style), Sans = `\f1` (`\fswiss Helvetica`, a portable sans name). Every block starts with explicit `\f0\fs18` and returns to it. `\fsN` is half-points.
+- **Reader:** parses `\fonttbl` (indices to Arial / Sans / Symbol) without leaking text; any non-Arial, non-Symbol face is Sans; Symbol (`\f1` bullet font) is never a body face. Missing `\fs` is 9 pt; out-of-set sizes snap to the nearest allowed size (ImportSample `\fs44` becomes 24). `\f` / `\fs` / B / I persist across `\par` and are scoped to `{}` groups.
+- **Untouched bodies:** `bytes_for_save` is unchanged; selecting a Node never rewrites it.
+- **UI:** Format popover has family and size button rows. They set mutually exclusive `family-*` and `size-*` tags on the selection (selection-only, like B/I/U) and set `body_dirty`. The body view is styled at Arial 9 pt so untagged text matches the default.
+- **Tests:** `nextguide-rtf` lib tests (round-trip per family and size, mixed runs, Guide fragments, snapping, persistence, group scope, untouched bytes) and the `gde_link` test `set_body_font_family_and_size_survive_save_and_reload`.
+- **Not done:** no typing style for an empty selection (matches B/I/U); no GTK unit tests.

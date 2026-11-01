@@ -1,6 +1,6 @@
 //! Edit model → pragmatic subset RTF (The Guide / Msftedit-friendly).
 
-use crate::model::{Block, Document, Run, SpanStyle};
+use crate::model::{Block, Document, FontFamily, Run, SpanStyle};
 
 /// Minimal valid empty body The Guide accepts (`{\rtf1}`-family).
 pub fn empty_rtf() -> Vec<u8> {
@@ -9,7 +9,10 @@ pub fn empty_rtf() -> Vec<u8> {
 
 /// Serialize an edit-model document to subset RTF bytes.
 pub fn write(doc: &Document) -> Vec<u8> {
-    let mut out = String::from("{\\rtf1\\ansi\\deff0\n");
+    // Font table: f0 = Arial (Guide-style), f1 = portable sans for FontFamily::Sans.
+    let mut out = String::from(
+        "{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}{\\f1\\fswiss\\fcharset0 Helvetica;}}\n",
+    );
     let mut number = 1u32;
 
     for block in &doc.blocks {
@@ -48,7 +51,14 @@ pub fn write(doc: &Document) -> Vec<u8> {
 }
 
 fn write_runs(out: &mut String, runs: &[Run]) {
+    // Char formatting persists across \par, so every block starts from an explicit,
+    // known baseline (default face and size) and returns to it at the end.
     let mut cur = SpanStyle::default();
+    out.push_str(&format!(
+        "\\f{}\\fs{} ",
+        font_index(cur.family),
+        cur.size.half_points()
+    ));
     for run in runs {
         emit_style_delta(out, cur, run.style);
         cur = run.style;
@@ -57,7 +67,20 @@ fn write_runs(out: &mut String, runs: &[Run]) {
     emit_style_delta(out, cur, SpanStyle::default());
 }
 
+fn font_index(family: FontFamily) -> u8 {
+    match family {
+        FontFamily::Arial => 0,
+        FontFamily::Sans => 1,
+    }
+}
+
 fn emit_style_delta(out: &mut String, from: SpanStyle, to: SpanStyle) {
+    if from.family != to.family {
+        out.push_str(&format!("\\f{} ", font_index(to.family)));
+    }
+    if from.size != to.size {
+        out.push_str(&format!("\\fs{} ", to.size.half_points()));
+    }
     if from.bold != to.bold {
         out.push_str(if to.bold { "\\b " } else { "\\b0 " });
     }

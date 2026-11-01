@@ -9,7 +9,7 @@ mod model;
 mod parse;
 mod write;
 
-pub use model::{Block, Document, Run, SpanStyle};
+pub use model::{Block, Document, FontFamily, FontSize, Run, SpanStyle};
 pub use parse::load;
 pub use write::{empty_rtf, write};
 
@@ -233,5 +233,153 @@ mod tests {
     fn document_plain_helper() {
         let doc = Document::plain("hi");
         assert_eq!(doc.blocks[0].runs()[0].text, "hi");
+    }
+
+    fn styled_run(text: &str, family: FontFamily, pt: u8) -> Run {
+        Run {
+            text: text.into(),
+            style: SpanStyle {
+                family,
+                size: FontSize::from_pt(pt).expect("allowed size"),
+                ..SpanStyle::default()
+            },
+        }
+    }
+
+    fn reload(doc: &Document) -> Document {
+        match load(&write(doc)) {
+            LoadBody::Editable(d) => d,
+            LoadBody::Unparseable { plain_fallback } => {
+                panic!("rewrite must parse, got {plain_fallback:?}")
+            }
+        }
+    }
+
+    #[test]
+    fn default_style_is_arial_nine_point() {
+        let style = SpanStyle::default();
+        assert_eq!(style.family, FontFamily::Arial);
+        assert_eq!(style.size.pt(), 9);
+        assert_eq!(style.size.half_points(), 18);
+    }
+
+    #[test]
+    fn round_trip_arial_twelve_point() {
+        let doc = Document {
+            blocks: vec![Block::Paragraph(vec![styled_run("Hi", FontFamily::Arial, 12)])],
+        };
+        let bytes = write(&doc);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("\\fs24"), "12pt is \\fs24: {text}");
+        assert_eq!(reload(&doc), doc);
+    }
+
+    #[test]
+    fn round_trip_sans_and_every_allowed_size() {
+        for pt in FontSize::ALLOWED_PT {
+            for family in [FontFamily::Arial, FontFamily::Sans] {
+                let doc = Document {
+                    blocks: vec![Block::Paragraph(vec![styled_run("x", family, pt)])],
+                };
+                assert_eq!(reload(&doc), doc, "{family:?} {pt}pt");
+            }
+        }
+    }
+
+    #[test]
+    fn round_trip_mixed_family_size_and_bold_in_one_paragraph() {
+        let mut bold_sans = styled_run("b", FontFamily::Sans, 18);
+        bold_sans.style.bold = true;
+        let doc = Document {
+            blocks: vec![
+                Block::Paragraph(vec![
+                    styled_run("a", FontFamily::Arial, 9),
+                    bold_sans,
+                    styled_run("c", FontFamily::Arial, 24),
+                ]),
+                Block::BulletItem(vec![styled_run("d", FontFamily::Sans, 14)]),
+                Block::NumberedItem(vec![styled_run("e", FontFamily::Sans, 10)]),
+            ],
+        };
+        assert_eq!(reload(&doc), doc);
+    }
+
+    #[test]
+    fn writer_declares_font_table_with_arial_as_f0() {
+        let text = String::from_utf8(write(&Document::plain("x"))).unwrap();
+        assert!(text.contains("{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}"), "{text}");
+        assert!(text.contains("\\fswiss"), "Sans must be a swiss family: {text}");
+    }
+
+    #[test]
+    fn load_missing_fs_is_nine_point_default() {
+        let sample = b"{\\rtf1\\ansi\\pard Plain\\par}";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        assert_eq!(doc.blocks[0].runs()[0].style.size.pt(), 9);
+        assert_eq!(doc.blocks[0].runs()[0].style.family, FontFamily::Arial);
+    }
+
+    #[test]
+    fn load_guide_f0_fs18_is_arial_nine() {
+        let sample = b"{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}}\r\n\\pard\\f0\\fs18 Hello\\par\r\n}\r\n";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        let style = doc.blocks[0].runs()[0].style;
+        assert_eq!((style.family, style.size.pt()), (FontFamily::Arial, 9));
+    }
+
+    #[test]
+    fn load_fs_in_half_points() {
+        let sample = b"{\\rtf1\\ansi\\pard\\fs24 Twelve\\par}";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        assert_eq!(doc.blocks[0].runs()[0].style.size.pt(), 12);
+    }
+
+    #[test]
+    fn load_out_of_set_size_snaps_to_nearest_allowed() {
+        // ImportSample uses \fs44 (22pt): nearest allowed is 24pt.
+        let sample = b"{\\rtf1\\ansi\\pard\\fs44 Demo\\par\\pard\\fs30 Odd\\par}";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        assert_eq!(doc.blocks[0].runs()[0].style.size.pt(), 24);
+        assert_eq!(doc.blocks[1].runs()[0].style.size.pt(), 14);
+    }
+
+    #[test]
+    fn load_unknown_non_arial_face_is_sans_but_symbol_is_not_a_body_face() {
+        let sample = b"{\\rtf1\\ansi\\deff0{\\fonttbl{\\f0\\fnil\\fcharset0 Arial;}{\\f1\\fnil\\fcharset2 Symbol;}{\\f2\\froman Times New Roman;}}\\pard\\f2 serif\\f1 sym\\par}";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        let runs = doc.blocks[0].runs();
+        assert_eq!(runs[0].style.family, FontFamily::Sans);
+        // Symbol is not a body face: the run stays Sans (previous face), never mapped.
+        assert_eq!(all_run_text(&doc), "serifsym");
+        assert_eq!(runs.len(), 1);
+    }
+
+    #[test]
+    fn char_formatting_persists_across_par() {
+        let sample = b"{\\rtf1\\ansi{\\fonttbl{\\f0 Arial;}{\\f1\\fswiss Helvetica;}}\\pard\\f1\\fs24\\b one\\par\\pard two\\par}";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        for block in &doc.blocks {
+            let style = block.runs()[0].style;
+            assert_eq!(style.family, FontFamily::Sans);
+            assert_eq!(style.size.pt(), 12);
+            assert!(style.bold);
+        }
+    }
+
+    #[test]
+    fn char_formatting_is_scoped_to_braced_groups() {
+        let sample = b"{\\rtf1\\ansi\\pard a{\\b\\fs48 b}c\\par}";
+        let LoadBody::Editable(doc) = load(sample) else { panic!() };
+        let runs = doc.blocks[0].runs();
+        assert_eq!(runs.len(), 3);
+        assert!(!runs[0].style.bold && !runs[2].style.bold);
+        assert_eq!(runs[1].style.size.pt(), 24);
+        assert_eq!(runs[2].style.size.pt(), 9);
+    }
+
+    #[test]
+    fn untouched_bytes_stay_verbatim_with_font_controls() {
+        let original = b"{\\rtf1\\ansi\\pard\\f0\\fs44 Demo\\par}";
+        assert_eq!(bytes_for_save(original, None), original);
     }
 }

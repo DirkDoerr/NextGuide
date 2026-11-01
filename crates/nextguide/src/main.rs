@@ -10,7 +10,9 @@ mod ui {
     use std::rc::Rc;
 
     use nextguide_gde::NodePath;
-    use nextguide_rtf::{load as load_rtf, Block, Document, LoadBody, Run, SpanStyle};
+    use nextguide_rtf::{
+        load as load_rtf, Block, Document, FontFamily, FontSize, LoadBody, Run, SpanStyle,
+    };
     use nextguide::{
         default_recent_store_path, needs_dirty_prompt, window_title_for_path, DirtyPromptChoice,
         EditorDoc, RecentFiles, TreeRow, APP_ID, UNDO_DEPTH_LIMIT,
@@ -87,6 +89,10 @@ mod ui {
         ToggleItalic,
         /// Toggle underline on the body selection.
         ToggleUnderline,
+        /// Set the font family on the body selection.
+        SetFontFamily(FontFamily),
+        /// Set the font size on the body selection.
+        SetFontSize(FontSize),
         /// Toggle bullet list on the selected body lines.
         ToggleBulletList,
         /// Toggle numbered list on the selected body lines.
@@ -236,6 +242,27 @@ mod ui {
                                     gtk::Separator {
                                         set_orientation: gtk::Orientation::Horizontal,
                                     },
+                                    gtk::Label {
+                                        set_label: "Font",
+                                        set_xalign: 0.0,
+                                    },
+                                    #[name = "font_family_box"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                        set_spacing: 2,
+                                    },
+                                    gtk::Label {
+                                        set_label: "Size (pt)",
+                                        set_xalign: 0.0,
+                                    },
+                                    #[name = "font_size_box"]
+                                    gtk::Box {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                        set_spacing: 2,
+                                    },
+                                    gtk::Separator {
+                                        set_orientation: gtk::Orientation::Horizontal,
+                                    },
                                     gtk::Button {
                                         set_label: "Bullet List",
                                         set_has_frame: false,
@@ -329,6 +356,7 @@ mod ui {
                             #[wrap(Some)]
                             set_child = body_view = &gtk::TextView {
                                 set_buffer: Some(&model.body_buffer),
+                                add_css_class: "ng-body",
                                 // Empty / no-selection sessions keep the body disabled.
                                 set_editable: false,
                                 set_cursor_visible: false,
@@ -409,6 +437,17 @@ mod ui {
             tag_table.add(&bold);
             tag_table.add(&italic);
             tag_table.add(&underline);
+            for family in FontFamily::ALL {
+                let tag = gtk::TextTag::new(Some(family_tag_name(family)));
+                tag.set_family(Some(family_pango_name(family)));
+                tag_table.add(&tag);
+            }
+            for pt in FontSize::ALLOWED_PT {
+                let size = FontSize::from_pt(pt).expect("allowed size");
+                let tag = gtk::TextTag::new(Some(&size_tag_name(size)));
+                tag.set_size_points(f64::from(pt));
+                tag_table.add(&tag);
+            }
             tag_table.add(&list_bullet);
             tag_table.add(&list_numbered);
             let body_buffer = gtk::TextBuffer::builder()
@@ -459,6 +498,27 @@ mod ui {
 
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
+            // Untagged body text reads as the default face and size (Arial 9 pt).
+            relm4::set_global_css(&format!(
+                ".ng-body {{ font-family: {}; font-size: {}pt; }}",
+                family_pango_name(FontFamily::default()),
+                FontSize::DEFAULT.pt()
+            ));
+            for family in FontFamily::ALL {
+                let button = gtk::Button::with_label(family.label());
+                button.set_has_frame(false);
+                let tx = sender.input_sender().clone();
+                button.connect_clicked(move |_| tx.emit(Msg::SetFontFamily(family)));
+                widgets.font_family_box.append(&button);
+            }
+            for pt in FontSize::ALLOWED_PT {
+                let size = FontSize::from_pt(pt).expect("allowed size");
+                let button = gtk::Button::with_label(&pt.to_string());
+                button.set_has_frame(false);
+                let tx = sender.input_sender().clone();
+                button.connect_clicked(move |_| tx.emit(Msg::SetFontSize(size)));
+                widgets.font_size_box.append(&button);
+            }
             let body_view = widgets.body_view.clone();
             let recent_menu = widgets.recent_menu.clone();
             let file_popover = widgets.file_popover.clone();
@@ -834,6 +894,26 @@ mod ui {
                 Msg::ToggleUnderline => {
                     self.toggle_body_style(widgets, "underline");
                 }
+                Msg::SetFontFamily(family) => {
+                    let names: Vec<String> = FontFamily::ALL
+                        .iter()
+                        .map(|f| family_tag_name(*f).to_string())
+                        .collect();
+                    self.set_body_font(widgets, &names, family_tag_name(family), family.label());
+                }
+                Msg::SetFontSize(size) => {
+                    let names: Vec<String> = FontSize::ALLOWED_PT
+                        .iter()
+                        .filter_map(|pt| FontSize::from_pt(*pt))
+                        .map(size_tag_name)
+                        .collect();
+                    self.set_body_font(
+                        widgets,
+                        &names,
+                        &size_tag_name(size),
+                        &format!("{} pt", size.pt()),
+                    );
+                }
                 Msg::ToggleBulletList => {
                     self.toggle_body_list(widgets, LineKind::Bullet);
                 }
@@ -1122,6 +1202,25 @@ mod ui {
             if toggle_style_tag(&self.body_buffer, tag) {
                 self.body_dirty = true;
                 self.status = format!("Toggled {tag}");
+                self.refresh_title(widgets);
+            }
+        }
+
+        /// Apply one tag from a mutually exclusive group (family or size) to the selection.
+        fn set_body_font(
+            &mut self,
+            widgets: &AppModelWidgets,
+            group: &[String],
+            tag: &str,
+            label: &str,
+        ) {
+            if !self.body_view.is_editable() {
+                self.status = "Select a Node to format its body.".into();
+                return;
+            }
+            if apply_exclusive_tag(&self.body_buffer, group, tag) {
+                self.body_dirty = true;
+                self.status = format!("Set {label}");
                 self.refresh_title(widgets);
             }
         }
@@ -1617,6 +1716,95 @@ mod ui {
             if run.style.underline {
                 buffer.apply_tag_by_name("underline", &start, &end);
             }
+            if run.style.family != FontFamily::default() {
+                buffer.apply_tag_by_name(family_tag_name(run.style.family), &start, &end);
+            }
+            if run.style.size != FontSize::default() {
+                buffer.apply_tag_by_name(&size_tag_name(run.style.size), &start, &end);
+            }
+        }
+    }
+
+    fn family_tag_name(family: FontFamily) -> &'static str {
+        match family {
+            FontFamily::Arial => "family-arial",
+            FontFamily::Sans => "family-sans",
+        }
+    }
+
+    /// Pango family name for a [`FontFamily`] (`Sans` is the system default sans alias).
+    fn family_pango_name(family: FontFamily) -> &'static str {
+        match family {
+            FontFamily::Arial => "Arial",
+            FontFamily::Sans => "Sans",
+        }
+    }
+
+    fn size_tag_name(size: FontSize) -> String {
+        format!("size-{}", size.pt())
+    }
+
+    /// Replace any tag in `group` on the selection with `tag`. Needs a non-empty selection.
+    fn apply_exclusive_tag(buffer: &gtk::TextBuffer, group: &[String], tag: &str) -> bool {
+        let Some((start, end)) = buffer.selection_bounds() else {
+            return false;
+        };
+        if start == end {
+            return false;
+        }
+        for name in group {
+            buffer.remove_tag_by_name(name, &start, &end);
+        }
+        buffer.apply_tag_by_name(tag, &start, &end);
+        true
+    }
+
+    /// Looked-up style tags for reading [`SpanStyle`] back out of the buffer.
+    struct StyleTags {
+        bold: Option<gtk::TextTag>,
+        italic: Option<gtk::TextTag>,
+        underline: Option<gtk::TextTag>,
+        families: Vec<(FontFamily, gtk::TextTag)>,
+        sizes: Vec<(FontSize, gtk::TextTag)>,
+    }
+
+    impl StyleTags {
+        fn lookup(buffer: &gtk::TextBuffer) -> Self {
+            let table = buffer.tag_table();
+            Self {
+                bold: table.lookup("bold"),
+                italic: table.lookup("italic"),
+                underline: table.lookup("underline"),
+                families: FontFamily::ALL
+                    .iter()
+                    .filter_map(|f| table.lookup(family_tag_name(*f)).map(|t| (*f, t)))
+                    .collect(),
+                sizes: FontSize::ALLOWED_PT
+                    .iter()
+                    .filter_map(|pt| FontSize::from_pt(*pt))
+                    .filter_map(|s| table.lookup(&size_tag_name(s)).map(|t| (s, t)))
+                    .collect(),
+            }
+        }
+
+        fn style_at(&self, iter: &gtk::TextIter) -> SpanStyle {
+            SpanStyle {
+                bold: self.bold.as_ref().is_some_and(|t| iter.has_tag(t)),
+                italic: self.italic.as_ref().is_some_and(|t| iter.has_tag(t)),
+                underline: self.underline.as_ref().is_some_and(|t| iter.has_tag(t)),
+                family: self
+                    .families
+                    .iter()
+                    .find(|(_, t)| iter.has_tag(t))
+                    .map(|(f, _)| *f)
+                    .unwrap_or_default(),
+                size: self
+                    .sizes
+                    .iter()
+                    .find(|(_, t)| iter.has_tag(t))
+                    .map(|(s, _)| *s)
+                    .unwrap_or_default(),
+            }
         }
     }
 
@@ -1859,9 +2047,7 @@ mod ui {
             return Document::empty();
         }
 
-        let bold = buffer.tag_table().lookup("bold");
-        let italic = buffer.tag_table().lookup("italic");
-        let underline = buffer.tag_table().lookup("underline");
+        let style_tags = StyleTags::lookup(buffer);
         let list_bullet = buffer.tag_table().lookup("list-bullet");
         let list_numbered = buffer.tag_table().lookup("list-numbered");
 
@@ -1888,9 +2074,7 @@ mod ui {
                 buffer,
                 abs_content_start,
                 &content,
-                bold.as_ref(),
-                italic.as_ref(),
-                underline.as_ref(),
+                &style_tags,
             );
             match kind {
                 LineKind::Paragraph => blocks.push(Block::Paragraph(runs)),
@@ -1944,9 +2128,7 @@ mod ui {
         buffer: &gtk::TextBuffer,
         start_off: usize,
         content: &str,
-        bold: Option<&gtk::TextTag>,
-        italic: Option<&gtk::TextTag>,
-        underline: Option<&gtk::TextTag>,
+        tags: &StyleTags,
     ) -> Vec<Run> {
         if content.is_empty() {
             return Vec::new();
@@ -1954,11 +2136,7 @@ mod ui {
         let chars: Vec<char> = content.chars().collect();
         let style_at = |i: usize| -> SpanStyle {
             let iter = buffer.iter_at_offset((start_off + i) as i32);
-            SpanStyle {
-                bold: bold.map(|t| iter.has_tag(t)).unwrap_or(false),
-                italic: italic.map(|t| iter.has_tag(t)).unwrap_or(false),
-                underline: underline.map(|t| iter.has_tag(t)).unwrap_or(false),
-            }
+            tags.style_at(&iter)
         };
         let mut runs = Vec::new();
         let mut run_start = 0usize;
