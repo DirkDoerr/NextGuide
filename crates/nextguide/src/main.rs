@@ -54,6 +54,8 @@ mod ui {
         recent_store: PathBuf,
         pending: Option<PendingAction>,
         recent_menu: gtk::Box,
+        file_popover: gtk::Popover,
+        recent_popover: gtk::Popover,
     }
 
     #[derive(Debug)]
@@ -124,6 +126,7 @@ mod ui {
                             set_label: "File",
                             set_always_show_arrow: false,
                             #[wrap(Some)]
+                            #[name = "file_popover"]
                             set_popover = &gtk::Popover {
                                 gtk::Box {
                                     set_orientation: gtk::Orientation::Vertical,
@@ -158,6 +161,7 @@ mod ui {
                                         set_has_frame: false,
                                         set_halign: gtk::Align::Start,
                                         #[wrap(Some)]
+                                        #[name = "recent_popover"]
                                         set_popover = &gtk::Popover {
                                             #[name = "recent_menu"]
                                             gtk::Box {
@@ -446,12 +450,16 @@ mod ui {
                 recent_store,
                 pending: None,
                 recent_menu: gtk::Box::new(gtk::Orientation::Vertical, 2),
+                file_popover: gtk::Popover::new(),
+                recent_popover: gtk::Popover::new(),
             };
 
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
             let body_view = widgets.body_view.clone();
             let recent_menu = widgets.recent_menu.clone();
+            let file_popover = widgets.file_popover.clone();
+            let recent_popover = widgets.recent_popover.clone();
 
             // Body-local format shortcuts: B/I/U and list toggles.
             let key = gtk::EventControllerKey::new();
@@ -550,6 +558,8 @@ mod ui {
             let model = AppModel {
                 body_view,
                 recent_menu,
+                file_popover,
+                recent_popover,
                 ..model
             };
             model.rebuild_recent_menu(&sender);
@@ -571,6 +581,7 @@ mod ui {
         ) {
             match message {
                 Msg::New => {
+                    self.dismiss_file_menus();
                     self.request_with_dirty_prompt(
                         widgets,
                         &sender,
@@ -579,6 +590,7 @@ mod ui {
                     );
                 }
                 Msg::OpenDialog => {
+                    self.dismiss_file_menus();
                     self.request_with_dirty_prompt(
                         widgets,
                         &sender,
@@ -587,6 +599,7 @@ mod ui {
                     );
                 }
                 Msg::Opened(path) => {
+                    self.dismiss_file_menus();
                     // CLI / Recent may open while dirty — prompt first.
                     if self.pending.is_none()
                         && needs_dirty_prompt(self.session_dirty())
@@ -605,6 +618,7 @@ mod ui {
                     self.status = format!("Open failed: {msg}");
                 }
                 Msg::Save => {
+                    self.dismiss_file_menus();
                     if let Err(err) = self.commit_body_if_needed() {
                         sender.input(Msg::SaveFailed(err));
                         return;
@@ -628,6 +642,7 @@ mod ui {
                     }
                 }
                 Msg::SaveAsDialog => {
+                    self.dismiss_file_menus();
                     if let Err(err) = self.commit_body_if_needed() {
                         sender.input(Msg::SaveFailed(err));
                         return;
@@ -709,6 +724,7 @@ mod ui {
                     }
                 },
                 Msg::RequestQuit => {
+                    self.dismiss_file_menus();
                     self.request_with_dirty_prompt(
                         widgets,
                         &sender,
@@ -1325,6 +1341,13 @@ mod ui {
             self.rebuild_recent_menu(sender);
         }
 
+        /// Pop down File and nested Recent popovers (MenuButton does not auto-dismiss
+        /// nested menus when a recent row is activated).
+        fn dismiss_file_menus(&self) {
+            self.recent_popover.popdown();
+            self.file_popover.popdown();
+        }
+
         fn rebuild_recent_menu(&self, sender: &ComponentSender<Self>) {
             while let Some(child) = self.recent_menu.first_child() {
                 self.recent_menu.remove(&child);
@@ -1343,7 +1366,12 @@ mod ui {
                 button.set_tooltip_text(Some(&label));
                 let path = path.clone();
                 let open_sender = sender.clone();
+                let file_popover = self.file_popover.clone();
+                let recent_popover = self.recent_popover.clone();
                 button.connect_clicked(move |_| {
+                    // Immediate dismiss before the open/dirty-prompt path runs.
+                    recent_popover.popdown();
+                    file_popover.popdown();
                     open_sender.input(Msg::Opened(path.clone()));
                 });
                 self.recent_menu.append(&button);
