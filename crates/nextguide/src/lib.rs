@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use nextguide_gde::{Guide, Result};
 
 pub use presentation::{
-    present, ActionOutcome, EditorSnapshot, FontFamilyControl, FontSizeControl, FormatToggle,
-    FormattingControls, FormattingSnapshot, ListLineKind, Presentation, StructureRefusal,
+    present, ActionOutcome, EditorSnapshot, FocusedPane, FontFamilyControl, FontSizeControl,
+    FormatToggle, FormattingControls, FormattingSnapshot, ListLineKind, Presentation,
+    StructureRefusal,
 };
 pub use recent::{RecentFiles, RECENT_LIMIT};
 pub use session::{
