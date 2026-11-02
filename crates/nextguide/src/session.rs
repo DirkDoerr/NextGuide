@@ -1,4 +1,5 @@
-//! Opened Guide session helpers (Dummy-root-hidden tree + body view + edit/restructure/save).
+//! Opened Guide session helpers (visible tree, body view, edit, restructure, save).
+//! The Dummy root is never shown.
 
 use std::path::{Path, PathBuf};
 
@@ -326,7 +327,7 @@ impl EditorDoc {
     }
 }
 
-/// Build the Dummy-root-hidden tree for a Guide.
+/// Visible tree for a Guide. The Dummy root is never shown.
 pub fn visible_tree(guide: &Guide) -> Vec<TreeRow> {
     guide
         .root()

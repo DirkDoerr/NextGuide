@@ -97,6 +97,54 @@ fn successful_save_publishes_no_status_sentence() {
 }
 
 #[test]
+fn open_rename_selection_and_dismissed_file_dialog_publish_no_status_sentence() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: true,
+        has_nodes: true,
+        node_selected: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+        formatting: FormattingSnapshot::default(),
+    };
+    for outcome in [
+        ActionOutcome::Opened,
+        ActionOutcome::Renamed,
+        ActionOutcome::Selected,
+        ActionOutcome::FileDialogDismissed,
+    ] {
+        assert_eq!(present(&snapshot, Some(outcome)).status_sentence, None);
+    }
+}
+
+#[test]
+fn unparseable_body_still_shows_the_soft_fail_sentence() {
+    let snapshot = EditorSnapshot {
+        guide_open: true,
+        dirty: true,
+        has_nodes: true,
+        node_selected: true,
+        focused_pane: FocusedPane::Tree,
+        body_undo_empty: true,
+        tree_undo_empty: true,
+        body_redo_empty: true,
+        tree_redo_empty: true,
+        formatting: FormattingSnapshot::default(),
+    };
+    let presentation = present(
+        &snapshot,
+        Some(ActionOutcome::UnparseableBody { path: "[0]".into() }),
+    );
+    assert_eq!(
+        presentation.status_sentence.as_deref(),
+        Some("Node [0] (unparseable RTF — edit replaces original bytes)")
+    );
+}
+
+#[test]
 fn failed_save_still_shows_the_failure_sentence() {
     let snapshot = EditorSnapshot {
         guide_open: true,

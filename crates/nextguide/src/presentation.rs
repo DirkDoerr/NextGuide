@@ -150,6 +150,15 @@ pub struct FormattingControls {
 pub enum ActionOutcome {
     /// The command finished. Publish no sentence.
     Success,
+    /// A Guide was opened. Publish no sentence.
+    Opened,
+    /// A Node was renamed. Publish no sentence.
+    Renamed,
+    /// A visible Node was selected. Publish no sentence.
+    Selected,
+    /// A file dialog was dismissed. The dirty prompt's Cancel uses the same
+    /// outcome. Neither publishes a sentence.
+    FileDialogDismissed,
     /// Save did not complete. `detail` is the error text the save path already has.
     SaveFailed { detail: String },
     /// There is no Guide to write.
@@ -170,6 +179,8 @@ pub enum ActionOutcome {
     IndentFailed { detail: String },
     /// Outdent failed. `detail` is the error the edit path already produced.
     OutdentFailed { detail: String },
+    /// The selected Node body could not be parsed. `path` is the Node path text.
+    UnparseableBody { path: String },
 }
 
 /// Why a structure command did not change the Guide.
@@ -225,7 +236,9 @@ pub enum StructureRefusal {
 /// whenever a Guide is open, including when nothing is selected. The other
 /// structure controls are grey until a Node is selected, and stay available
 /// then even if the move will be refused. Undo and Redo each follow the focused
-/// pane’s own stack. A success publishes nothing.
+/// pane’s own stack. A success publishes nothing, including open, rename,
+/// selection, and dismissing a file dialog. An unparseable Node body still
+/// returns its existing soft-fail sentence.
 pub fn present(snapshot: &EditorSnapshot, outcome: Option<ActionOutcome>) -> Presentation {
     let text_selected = snapshot.formatting.text_selected;
     let (undo_stack_empty, redo_stack_empty) = match snapshot.focused_pane {
@@ -341,7 +354,18 @@ fn status_sentence(outcome: Option<ActionOutcome>) -> Option<String> {
         Some(ActionOutcome::ReorderFailed { detail }) => Some(format!("Reorder failed: {detail}")),
         Some(ActionOutcome::IndentFailed { detail }) => Some(format!("Indent failed: {detail}")),
         Some(ActionOutcome::OutdentFailed { detail }) => Some(format!("Outdent failed: {detail}")),
-        Some(ActionOutcome::Success | ActionOutcome::Formatted) | None => None,
+        Some(ActionOutcome::UnparseableBody { path }) => Some(format!(
+            "Node {path} (unparseable RTF — edit replaces original bytes)"
+        )),
+        Some(
+            ActionOutcome::Success
+            | ActionOutcome::Formatted
+            | ActionOutcome::Opened
+            | ActionOutcome::Renamed
+            | ActionOutcome::Selected
+            | ActionOutcome::FileDialogDismissed,
+        )
+        | None => None,
     }
 }
 

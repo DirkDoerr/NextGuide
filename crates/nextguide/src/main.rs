@@ -36,13 +36,6 @@ mod ui {
         Quit,
     }
 
-    /// Which undo stack toolbar Undo/Redo and shortcuts target.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum FocusPane {
-        Tree,
-        Body,
-    }
-
     struct AppModel {
         doc: Option<EditorDoc>,
         selected: Option<NodePath>,
@@ -56,7 +49,7 @@ mod ui {
         /// True when the body pane text differs from the last committed Node body.
         body_dirty: bool,
         /// Active undo stack follows focus (body GTK buffer vs tree/title app stack).
-        focus_pane: FocusPane,
+        focus_pane: FocusedPane,
         recent: RecentFiles,
         recent_store: PathBuf,
         pending: Option<PendingAction>,
@@ -95,7 +88,7 @@ mod ui {
         BodyChanged,
         /// Caret or selection moved in the body. Refresh formatting controls.
         BodySelectionChanged,
-        FocusPane(FocusPane),
+        FocusedPane(FocusedPane),
         Undo,
         Redo,
         /// Toggle bold on the body selection.
@@ -431,6 +424,10 @@ mod ui {
 
             let title_cell = gtk::CellRendererText::new();
             title_cell.set_editable(true);
+            // GtkTreeView has no per-row CSS node. View padding only insets the
+            // widget, so the theme selection never covers it. Y-padding is inside
+            // each row, and the theme paints its selection across that row.
+            title_cell.set_ypad(6);
             let column = gtk::TreeViewColumn::new();
             column.set_title("Title");
             column.pack_start(&title_cell, true);
@@ -522,7 +519,7 @@ mod ui {
             let tree_focus = gtk::EventControllerFocus::new();
             let focus_sender = sender.clone();
             tree_focus.connect_enter(move |_| {
-                focus_sender.input(Msg::FocusPane(FocusPane::Tree));
+                focus_sender.input(Msg::FocusedPane(FocusedPane::Tree));
             });
             tree_view.add_controller(tree_focus);
             tree_view.set_can_focus(true);
@@ -537,7 +534,7 @@ mod ui {
                 body_view: gtk::TextView::new(),
                 suppress_body_signal,
                 body_dirty: false,
-                focus_pane: FocusPane::Tree,
+                focus_pane: FocusedPane::Tree,
                 recent,
                 recent_store,
                 pending: None,
@@ -560,10 +557,10 @@ mod ui {
             let widgets = view_output!();
             widgets.tree_scroll.set_child(Some(&model.tree_view));
             // Padding and spacing only, plus the closed default face (Arial 9).
-            // No colors: tree selection stays the theme's own selected background.
+            // Tree-row padding is the cell's y-padding, not this sheet: the sheet
+            // has no color, so selection stays the theme's own selected background.
             relm4::set_global_css(&format!(
                 "\
-treeview.ng-tree {{ padding-top: 6px; padding-bottom: 6px; }}
 textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}pt; }}
 .ng-tool-group + .ng-tool-group {{ margin-left: 12px; }}
 ",
@@ -639,7 +636,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
             let body_focus = gtk::EventControllerFocus::new();
             let body_focus_sender = sender.clone();
             body_focus.connect_enter(move |_| {
-                body_focus_sender.input(Msg::FocusPane(FocusPane::Body));
+                body_focus_sender.input(Msg::FocusedPane(FocusedPane::Body));
             });
             body_view.add_controller(body_focus);
 
@@ -836,7 +833,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                 Msg::DirtyChoice(choice) => match choice {
                     DirtyPromptChoice::Cancel => {
                         self.pending = None;
-                        self.status = "Cancelled.".into();
+                        self.publish_outcome(ActionOutcome::FileDialogDismissed);
                     }
                     DirtyPromptChoice::Discard => {
                         if let Some(pending) = self.pending.take() {
@@ -911,13 +908,13 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                             self.body_dirty = false;
                             self.selected = Some(path.clone());
                             self.set_body_editable(true);
-                            self.status = if view.soft_fail {
-                                format!(
-                                    "Node {path} (unparseable RTF — edit replaces original bytes)"
-                                )
+                            if view.soft_fail {
+                                self.publish_outcome(ActionOutcome::UnparseableBody {
+                                    path: path.to_string(),
+                                });
                             } else {
-                                format!("Node {path}")
-                            };
+                                self.publish_outcome(ActionOutcome::Selected);
+                            }
                         }
                         Err(err) => {
                             self.selected = None;
@@ -938,7 +935,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                     self.refresh_title(widgets);
                 }
                 Msg::TitleEdited { path, title } => {
-                    self.focus_pane = FocusPane::Tree;
+                    self.focus_pane = FocusedPane::Tree;
                     let Some(doc) = self.doc.as_mut() else {
                         return;
                     };
@@ -949,7 +946,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                             if let Some(sel) = &self.selected {
                                 select_path_in_tree(&self.tree_view, &self.tree_store, sel);
                             }
-                            self.status = format!("Renamed {path}");
+                            self.publish_outcome(ActionOutcome::Renamed);
                             self.refresh_title(widgets);
                         }
                         Err(err) => {
@@ -964,7 +961,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                 Msg::BodySelectionChanged => {
                     self.refresh_formatting();
                 }
-                Msg::FocusPane(pane) => {
+                Msg::FocusedPane(pane) => {
                     self.focus_pane = pane;
                     // Undo and Redo follow the pane that was focused before the click.
                     self.refresh_title(widgets);
@@ -1002,17 +999,18 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                     );
                 }
                 Msg::ToggleBulletList => {
-                    self.toggle_body_list(widgets, LineKind::Bullet);
+                    self.toggle_body_list(widgets, ListLineKind::Bullet);
                 }
                 Msg::ToggleNumberedList => {
-                    self.toggle_body_list(widgets, LineKind::Numbered);
+                    self.toggle_body_list(widgets, ListLineKind::Numbered);
                 }
                 Msg::InsertChild => {
                     if let Err(err) = self.commit_body_if_needed() {
                         self.status = format!("Could not apply body edit: {err}");
                         return;
                     }
-                    // Nothing selected: the child hangs under the hidden Dummy root.
+                    // Nothing selected: the child is a top-level Node under the Dummy root,
+                    // which is never shown.
                     let parent = self.selected.clone().unwrap_or_else(NodePath::root);
                     let Some(doc) = self.doc.as_mut() else {
                         self.publish_outcome(ActionOutcome::StructureRefused(
@@ -1248,7 +1246,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
 
         fn run_undo(&mut self, widgets: &AppModelWidgets) {
             match self.focus_pane {
-                FocusPane::Body => {
+                FocusedPane::Body => {
                     if self.body_buffer.can_undo() {
                         self.body_buffer.undo();
                         self.publish_outcome(ActionOutcome::Success);
@@ -1257,7 +1255,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                         self.status = "Nothing to undo in the body".into();
                     }
                 }
-                FocusPane::Tree => {
+                FocusedPane::Tree => {
                     // Discard uncommitted body buffer edits so refresh cannot
                     // re-apply them onto the restored Guide checkpoint.
                     self.body_dirty = false;
@@ -1276,7 +1274,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
 
         fn run_redo(&mut self, widgets: &AppModelWidgets) {
             match self.focus_pane {
-                FocusPane::Body => {
+                FocusedPane::Body => {
                     if self.body_buffer.can_redo() {
                         self.body_buffer.redo();
                         self.publish_outcome(ActionOutcome::Success);
@@ -1285,7 +1283,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                         self.status = "Nothing to redo in the body".into();
                     }
                 }
-                FocusPane::Tree => {
+                FocusedPane::Tree => {
                     self.body_dirty = false;
                     let Some(doc) = self.doc.as_mut() else {
                         self.status = "Nothing to redo".into();
@@ -1366,7 +1364,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
             }
         }
 
-        fn toggle_body_list(&mut self, widgets: &AppModelWidgets, kind: LineKind) {
+        fn toggle_body_list(&mut self, widgets: &AppModelWidgets, kind: ListLineKind) {
             if !self.body_view.is_editable() {
                 self.status = "Select a Node to format its body.".into();
                 return;
@@ -1395,10 +1393,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                     .map(|doc| !doc.visible_tree().is_empty())
                     .unwrap_or(false),
                 node_selected: self.selected.is_some(),
-                focused_pane: match self.focus_pane {
-                    FocusPane::Tree => FocusedPane::Tree,
-                    FocusPane::Body => FocusedPane::Body,
-                },
+                focused_pane: self.focus_pane,
                 body_undo_empty: !self.body_buffer.can_undo(),
                 tree_undo_empty: self
                     .doc
@@ -1711,7 +1706,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                     );
                     self.tree_view.expand_all();
                     self.show_unselected_body();
-                    self.status = format!("Opened {}", path.display());
+                    self.publish_outcome(ActionOutcome::Opened);
                     self.remember_recent(&path, sender);
                     self.refresh_title(widgets);
                 }
@@ -1887,13 +1882,20 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         }
     }
 
+    /// Icon toggle plus a parent box. GTK hides a tooltip on an insensitive
+    /// button, so the parent keeps the command name visible while the icon is grey.
+    struct FormatToggleButton {
+        wrap: gtk::Box,
+        button: gtk::ToggleButton,
+    }
+
     /// Formatting icon buttons and font dropdowns. The shell renders `FormattingControls`.
     struct FormatBar {
-        bold: gtk::ToggleButton,
-        italic: gtk::ToggleButton,
-        underline: gtk::ToggleButton,
-        bullet: gtk::ToggleButton,
-        numbered: gtk::ToggleButton,
+        bold: FormatToggleButton,
+        italic: FormatToggleButton,
+        underline: FormatToggleButton,
+        bullet: FormatToggleButton,
+        numbered: FormatToggleButton,
         family: gtk::DropDown,
         size: gtk::DropDown,
         /// Set while syncing widgets so a dropdown notify does not apply a font.
@@ -1953,11 +1955,11 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         }
 
         fn attach(&self, characters: &gtk::Box, lists: &gtk::Box, fonts: &gtk::Box) {
-            characters.append(&self.bold);
-            characters.append(&self.italic);
-            characters.append(&self.underline);
-            lists.append(&self.bullet);
-            lists.append(&self.numbered);
+            characters.append(&self.bold.wrap);
+            characters.append(&self.italic.wrap);
+            characters.append(&self.underline.wrap);
+            lists.append(&self.bullet.wrap);
+            lists.append(&self.numbered.wrap);
             fonts.append(&self.family);
             fonts.append(&self.size);
         }
@@ -1987,13 +1989,15 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         icon: &str,
         sender: &ComponentSender<AppModel>,
         message: Msg,
-    ) -> gtk::ToggleButton {
+    ) -> FormatToggleButton {
         let button = gtk::ToggleButton::new();
         button.set_icon_name(icon);
         button.set_focus_on_click(false);
         let tx = sender.input_sender().clone();
         button.connect_clicked(move |_| tx.emit(message.clone()));
-        button
+        let wrap = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        wrap.append(&button);
+        FormatToggleButton { wrap, button }
     }
 
     fn font_dropdown(labels: impl IntoIterator<Item = impl AsRef<str>>) -> gtk::DropDown {
@@ -2047,10 +2051,11 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         });
     }
 
-    fn sync_toggle(button: &gtk::ToggleButton, control: FormatToggle) {
-        button.set_sensitive(control.enabled);
-        button.set_active(control.pressed);
-        button.set_tooltip_text(Some(control.tooltip));
+    fn sync_toggle(toggle: &FormatToggleButton, control: FormatToggle) {
+        toggle.button.set_sensitive(control.enabled);
+        toggle.button.set_active(control.pressed);
+        toggle.button.set_tooltip_text(Some(control.tooltip));
+        toggle.wrap.set_tooltip_text(Some(control.tooltip));
     }
 
     fn sync_dropdown(dropdown: &gtk::DropDown, enabled: bool, selected: Option<u32>) {
@@ -2317,12 +2322,11 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
             let Some(iter) = buffer.iter_at_line(line) else {
                 continue;
             };
-            let kind = line_kind_from_tags(&iter, list_bullet.as_ref(), list_numbered.as_ref());
-            lines.push(match kind {
-                LineKind::Paragraph => ListLineKind::Paragraph,
-                LineKind::Bullet => ListLineKind::Bullet,
-                LineKind::Numbered => ListLineKind::Numbered,
-            });
+            lines.push(line_kind_from_tags(
+                &iter,
+                list_bullet.as_ref(),
+                list_numbered.as_ref(),
+            ));
         }
         lines
     }
@@ -2342,7 +2346,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         list_prefix_chars(&text, kind) as i32
     }
 
-    fn toggle_list_kind(buffer: &gtk::TextBuffer, want: LineKind) -> bool {
+    fn toggle_list_kind(buffer: &gtk::TextBuffer, want: ListLineKind) -> bool {
         let (start_line, end_line) = selection_line_span(buffer);
 
         let list_bullet = buffer.tag_table().lookup("list-bullet");
@@ -2361,7 +2365,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         }
 
         let target = if all_want {
-            LineKind::Paragraph
+            ListLineKind::Paragraph
         } else {
             want
         };
@@ -2377,7 +2381,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                 list_numbered.as_ref(),
             );
         }
-        if matches!(target, LineKind::Numbered) {
+        if matches!(target, ListLineKind::Numbered) {
             renumber_numbered_lines(buffer, list_numbered.as_ref());
         }
         buffer.end_user_action();
@@ -2388,20 +2392,20 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         line_iter: &gtk::TextIter,
         list_bullet: Option<&gtk::TextTag>,
         list_numbered: Option<&gtk::TextTag>,
-    ) -> LineKind {
+    ) -> ListLineKind {
         if list_bullet.is_some_and(|t| line_iter.has_tag(t)) {
-            LineKind::Bullet
+            ListLineKind::Bullet
         } else if list_numbered.is_some_and(|t| line_iter.has_tag(t)) {
-            LineKind::Numbered
+            ListLineKind::Numbered
         } else {
-            LineKind::Paragraph
+            ListLineKind::Paragraph
         }
     }
 
     fn set_line_list_kind(
         buffer: &gtk::TextBuffer,
         line: i32,
-        target: LineKind,
+        target: ListLineKind,
         list_bullet: Option<&gtk::TextTag>,
         list_numbered: Option<&gtk::TextTag>,
     ) {
@@ -2440,9 +2444,9 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         }
 
         let insert_prefix = match target {
-            LineKind::Paragraph => None,
-            LineKind::Bullet => Some("• ".to_string()),
-            LineKind::Numbered => Some("1. ".to_string()),
+            ListLineKind::Paragraph => None,
+            ListLineKind::Bullet => Some("• ".to_string()),
+            ListLineKind::Numbered => Some("1. ".to_string()),
         };
         if let Some(prefix) = insert_prefix {
             buffer.insert(&mut line_start, &prefix);
@@ -2457,26 +2461,26 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         }
 
         let tag_name = match target {
-            LineKind::Paragraph => None,
-            LineKind::Bullet => Some("list-bullet"),
-            LineKind::Numbered => Some("list-numbered"),
+            ListLineKind::Paragraph => None,
+            ListLineKind::Bullet => Some("list-bullet"),
+            ListLineKind::Numbered => Some("list-numbered"),
         };
         if let Some(name) = tag_name {
             buffer.apply_tag_by_name(name, &line_start, &line_end);
         }
     }
 
-    fn list_prefix_chars(line: &str, kind: LineKind) -> usize {
+    fn list_prefix_chars(line: &str, kind: ListLineKind) -> usize {
         match kind {
-            LineKind::Paragraph => 0,
-            LineKind::Bullet => {
+            ListLineKind::Paragraph => 0,
+            ListLineKind::Bullet => {
                 if line.starts_with("• ") {
                     2
                 } else {
                     0
                 }
             }
-            LineKind::Numbered => {
+            ListLineKind::Numbered => {
                 let chars: Vec<char> = line.chars().collect();
                 let mut i = 0;
                 while i < chars.len() && chars[i].is_ascii_digit() {
@@ -2511,7 +2515,7 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                 line_end.forward_to_line_end();
             }
             let line_text = buffer.text(&line_start, &line_end, true);
-            let old_prefix = list_prefix_chars(&line_text, LineKind::Numbered);
+            let old_prefix = list_prefix_chars(&line_text, ListLineKind::Numbered);
             let new_prefix = format!("{number}. ");
             number += 1;
             if old_prefix > 0 {
@@ -2576,9 +2580,9 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
                 &style_tags,
             );
             match kind {
-                LineKind::Paragraph => blocks.push(Block::Paragraph(runs)),
-                LineKind::Bullet => blocks.push(Block::BulletItem(runs)),
-                LineKind::Numbered => blocks.push(Block::NumberedItem(runs)),
+                ListLineKind::Paragraph => blocks.push(Block::Paragraph(runs)),
+                ListLineKind::Bullet => blocks.push(Block::BulletItem(runs)),
+                ListLineKind::Numbered => blocks.push(Block::NumberedItem(runs)),
             }
             if line_end >= chars.len() {
                 break;
@@ -2588,23 +2592,16 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
         Document { blocks }
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum LineKind {
-        Paragraph,
-        Bullet,
-        Numbered,
-    }
-
     /// Block kind from list tags; strip display prefixes only when tagged as a list.
     fn classify_line(
         line: &str,
         line_iter: &gtk::TextIter,
         list_bullet: Option<&gtk::TextTag>,
         list_numbered: Option<&gtk::TextTag>,
-    ) -> (LineKind, usize) {
+    ) -> (ListLineKind, usize) {
         if list_bullet.is_some_and(|t| line_iter.has_tag(t)) {
             let start = if line.starts_with("• ") { 2 } else { 0 };
-            return (LineKind::Bullet, start);
+            return (ListLineKind::Bullet, start);
         }
         if list_numbered.is_some_and(|t| line_iter.has_tag(t)) {
             let chars: Vec<char> = line.chars().collect();
@@ -2618,9 +2615,9 @@ textview.ng-body {{ padding: 12px 16px; font-family: {family}; font-size: {size}
             } else {
                 0
             };
-            return (LineKind::Numbered, start);
+            return (ListLineKind::Numbered, start);
         }
-        (LineKind::Paragraph, 0)
+        (ListLineKind::Paragraph, 0)
     }
 
     fn runs_for_range(
