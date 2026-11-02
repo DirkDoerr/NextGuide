@@ -65,7 +65,7 @@ Editing behavior stays the closed Editor v1 contract. This slice changes present
 49. As a Guide owner, I want roomier tree rows and body padding than today, so that the panes feel less cramped.
 50. As a Guide owner, I want the tree selection to use the GTK theme’s selection color, drawn across the padded row, so that selection is obvious without a new palette.
 51. As a Guide owner, I want the body’s default type to stay Arial 9, so that unstyled text still matches the closed font default.
-52. As a Guide owner, I want the Dummy root to stay hidden, so that Insert Child with nothing selected adds a top-level Node I can see.
+52. As a Guide owner, I want the Dummy root never to be shown, so that Insert Child with nothing selected adds a top-level Node I can see.
 53. As a NextGuide developer, I want GTK4 and Relm4 to remain the UI stack, so that ADR-0003 stays in force.
 54. As a NextGuide developer, I want no libadwaita dependency, so that the window does not become a GNOME application.
 55. As a NextGuide developer, I want one small stylesheet for padding and spacing, so that the look does not introduce a color palette.
@@ -85,7 +85,7 @@ Editing behavior stays the closed Editor v1 contract. This slice changes present
 - The shell drops the header strip of File / Edit / Format / Tree popovers. Edit, Format, and Tree are not menus. Their commands live on the toolbar.
 - Tree and body widgets stay the current tree view and text view. A stylesheet sets padding and spacing only, including roomier tree rows and body padding. Selection color is the theme’s selection, painted across the padded tree row. The body default remains Arial 9. The empty hint is that stylesheet-free string in the body area, and only when the API says the Guide has no Nodes. The body stays non-editable in that state, as it does today.
 - Shortcuts are unchanged. Tooltips are the command name, and the existing shortcut when the command has one. Tree commands have no shortcut in the tooltip.
-- Grey versus clickable follows the snapshot, not a second copy of the edit rules in the widget callbacks. In particular, Insert Child stays enabled for an open Guide with no selection (the child is a top-level Node under the hidden Dummy root). Structure commands stay enabled when a Node is selected even if the eventual move will be refused. Those refusals still surface through the presentation API as status sentences.
+- Grey versus clickable follows the snapshot, not a second copy of the edit rules in the widget callbacks. In particular, Insert Child stays enabled for an open Guide with no selection (the child is a top-level Node under the Dummy root, which is never shown). Structure commands stay enabled when a Node is selected even if the eventual move will be refused. Those refusals still surface through the presentation API as status sentences.
 - Respect ADR-0003: GTK4 + Relm4, dynamically linked, no web UI. Do not add libadwaita. Do not add a custom icon set or a color palette.
 
 ## Testing Decisions
